@@ -29,7 +29,7 @@ router.post("/superadmin-login", (req, res) => {
     return res.status(401).json({ error: "Contraseña incorrecta" });
   }
   const token = jwt.sign({ role: "superadmin" }, process.env.JWT_SECRET, { expiresIn: "12h" });
-  res.json({ token });
+  res.json({ token, user: { role: "superadmin", name: "Super Admin" } });
 });
 
 export default router;

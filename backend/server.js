@@ -34,6 +34,10 @@ io.on("connection", (socket) => {
   socket.on("join_business", (businessId) => {
     socket.join(businessId);
   });
+  // El cliente lo emite tras cada reconexión. Por ahora el resync real lo
+  // hace el cliente (vuelve a pedir /api/orders y /api/products), pero deja
+  // el hook listo si más adelante se quiere reenviar algo desde el servidor.
+  socket.on("resync_requested", () => {});
 });
 
 app.set("io", io);

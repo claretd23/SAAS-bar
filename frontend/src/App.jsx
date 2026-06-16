@@ -8,6 +8,7 @@ import MeseroView from "./components/MeseroView.jsx";
 import BarmanView from "./components/BarmanView.jsx";
 import AdminView from "./components/AdminView.jsx";
 import SuperAdminView from "./superadmin/SuperAdminView.jsx";
+import SuperAdminLogin from "./superadmin/SuperAdminLogin.jsx";
 
 // Inyecta estilos globales una sola vez
 const style = document.createElement("style");
@@ -15,7 +16,8 @@ style.textContent = globalStyles;
 document.head.appendChild(style);
 
 export default function App() {
-const [user, setUser] = useState(() => getSession()?.user || null);  const [products, setProducts] = useState([]);
+  const [user, setUser] = useState(() => getSession()?.user || null);
+  const [products, setProducts] = useState([]);
   const [promos, setPromos] = useState([]);
   const [orders, setOrders] = useState([]);
   const [ready, setReady] = useState(false);
@@ -38,6 +40,15 @@ const [user, setUser] = useState(() => getSession()?.user || null);  const [prod
     loadData();
 
     const socket = connectSocket(user.businessId);
+
+    // Se dispara en la primera conexión Y en cada reconexión (ej. el iPad
+    // se quedó en reposo, se cortó el WiFi un momento, etc.). Volvemos a
+    // pedir el estado completo para no quedar desincronizados con eventos
+    // que se hayan perdido mientras el socket estuvo caído.
+    socket.on("connect", () => {
+      loadData();
+    });
+
     // El backend emite "orders_updated" cuando cambia algo
     socket.on("orders_updated", () => {
       api.getOrders().then(setOrders).catch(() => {});
@@ -60,7 +71,6 @@ const [user, setUser] = useState(() => getSession()?.user || null);  const [prod
     setOrders([]);
   };
 
-  // Pantalla de superadmin (login separado en /superadmin)
   const isSuperAdmin = user?.role === "superadmin";
 
   if (!ready) return (
@@ -69,8 +79,49 @@ const [user, setUser] = useState(() => getSession()?.user || null);  const [prod
     </div>
   );
 
+  return (
+    <Routes>
+      {/* Ruta dedicada para el superadmin: /superadmin
+          - Sin sesión de superadmin -> pantalla de login propia
+          - Con sesión de superadmin -> panel de superadmin
+          Si alguien con sesión de negocio (mesero/barman/admin) visita esta
+          URL, lo regresamos a "/" para no mezclar los dos mundos. */}
+      <Route
+        path="/superadmin"
+        element={
+          isSuperAdmin
+            ? <SuperAdminView onLogout={handleLogout} />
+            : (!user
+                ? <SuperAdminLogin onLogin={handleLogin} />
+                : <Navigate to="/" replace />)
+        }
+      />
+
+      {/* Todo lo demás: flujo normal de negocio (mesero/barman/admin) */}
+      <Route path="/*" element={<BusinessApp
+        user={user}
+        isSuperAdmin={isSuperAdmin}
+        products={products}
+        promos={promos}
+        orders={orders}
+        setProducts={setProducts}
+        setPromos={setPromos}
+        setOrders={setOrders}
+        handleLogin={handleLogin}
+        handleLogout={handleLogout}
+      />} />
+    </Routes>
+  );
+}
+
+// Flujo de negocio normal (lo que antes vivía directo en App). Separado para
+// no mezclar su lógica de socket/carga de datos con la ruta de superadmin.
+function BusinessApp({ user, isSuperAdmin, products, promos, orders, setProducts, setPromos, setOrders, handleLogin, handleLogout }) {
   if (!user) return <Login onLogin={handleLogin} />;
-  if (isSuperAdmin) return <SuperAdminView onLogout={handleLogout} />;
+
+  // Alguien con sesión de superadmin cayó en una ruta de negocio (ej. refrescó
+  // estando en "/" después de loguearse como superadmin en otra pestaña).
+  if (isSuperAdmin) return <Navigate to="/superadmin" replace />;
 
   const commonProps = {
     user,
@@ -83,17 +134,14 @@ const [user, setUser] = useState(() => getSession()?.user || null);  const [prod
     onLogout: handleLogout,
   };
 
-console.log("USER COMPLETO:", user);
-console.log("ROLE:", user?.role);
+  if (user.role === "mesero") return <MeseroView {...commonProps} />;
+  if (user.role === "barman") return <BarmanView {...commonProps} />;
+  if (user.role === "admin") return <AdminView {...commonProps} />;
 
-if (user.role === "mesero") return <MeseroView {...commonProps} />;
-if (user.role === "barman") return <BarmanView {...commonProps} />;
-if (user.role === "admin") return <AdminView {...commonProps} />;
-
-return (
-  <div style={{ color: C.text, padding: 40 }}>
-    <h2>Rol desconocido</h2>
-    <pre>{JSON.stringify(user, null, 2)}</pre>
-  </div>
-);
-}   
+  return (
+    <div style={{ color: C.text, padding: 40 }}>
+      <h2>Rol desconocido</h2>
+      <pre>{JSON.stringify(user, null, 2)}</pre>
+    </div>
+  );
+}

@@ -76,4 +76,11 @@ if (!promoCols.includes("emoji")) {
   console.log("Migracion: columna emoji agregada a promos");
 }
 
+if (!productCols.includes("unlimited_stock")) {
+  // Para bebidas preparadas (mojito, cocteles) donde no tiene sentido
+  // llevar inventario unidad por unidad. 0 = lleva stock normal, 1 = ilimitado.
+  db.exec("ALTER TABLE products ADD COLUMN unlimited_stock INTEGER NOT NULL DEFAULT 0");
+  console.log("Migracion: columna unlimited_stock agregada a products");
+}
+
 export default db;

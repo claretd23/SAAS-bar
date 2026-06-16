@@ -1,20 +1,23 @@
 // frontend/src/superadmin/SuperAdminLogin.jsx
 import { useState } from "react";
 import { C } from "../styles.js";
-import { api } from "../api.js";
+import { api, saveSession } from "../api.js";
 
 export default function SuperAdminLogin({ onLogin }) {
-  const [user, setUser] = useState("");
   const [pass, setPass] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const handleLogin = async () => {
-    if (!user || !pass) { setError("Ingresa usuario y contraseña"); return; }
+    if (!pass) { setError("Ingresa la contraseña"); return; }
     setLoading(true); setError("");
     try {
-      const result = await api.superAdminLogin({ username: user, password: pass });
-      onLogin(result.user);
+      // El backend solo valida una contraseña fija desde .env (SUPERADMIN_PASSWORD),
+      // no hay usuario/contraseña por persona — coincide con la firma real de la API.
+      const { token } = await api.superadminLogin(pass);
+      const user = { role: "superadmin", name: "Super Admin" };
+      saveSession(token, user);
+      onLogin(user);
     } catch (e) {
       setError(e.message || "Credenciales incorrectas");
     } finally {
@@ -48,23 +51,6 @@ export default function SuperAdminLogin({ onLogin }) {
             fontSize: 13, color: C.red,
           }}>{error}</div>
         )}
-
-        <div style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, textTransform: "uppercase" }}>
-            Usuario
-          </div>
-          <input
-            value={user}
-            onChange={e => setUser(e.target.value)}
-            placeholder="superadmin"
-            autoComplete="username"
-            style={{
-              width: "100%", background: C.bg3, border: `1px solid ${C.border2}`,
-              borderRadius: 8, color: C.text, padding: "9px 12px", fontSize: 14,
-              boxSizing: "border-box",
-            }}
-          />
-        </div>
 
         <div style={{ marginBottom: 22 }}>
           <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, textTransform: "uppercase" }}>

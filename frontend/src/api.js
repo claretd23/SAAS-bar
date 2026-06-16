@@ -1,0 +1,99 @@
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+
+function getToken() {
+  return localStorage.getItem("token");
+}
+
+async function request(path, { method = "GET", body } = {}) {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/api${path}`, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Error de conexión" }));
+    throw new Error(err.error || "Error desconocido");
+  }
+  return res.json();
+}
+
+// Petición con FormData (para subir imágenes — NO pone Content-Type, el browser lo hace solo)
+async function requestForm(path, { method = "POST", data } = {}) {
+  const token = getToken();
+  const form = new FormData();
+  Object.entries(data).forEach(([k, v]) => {
+    if (v != null) form.append(k, v);
+  });
+
+  const res = await fetch(`${API_URL}/api${path}`, {
+    method,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      // ⚠️ NO pongas Content-Type aquí — el browser lo agrega con el boundary correcto
+    },
+    body: form,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: "Error de conexión" }));
+    throw new Error(err.error || "Error desconocido");
+  }
+  return res.json();
+}
+
+export const api = {
+  // Auth
+  login: (businessId, pin) => request("/auth/login", { method: "POST", body: { businessId, pin } }),
+  superadminLogin: (password) => request("/auth/superadmin-login", { method: "POST", body: { password } }),
+
+  // Negocios (super-admin)
+  getBusinesses: () => request("/businesses"),
+  createBusiness: (data) => request("/businesses", { method: "POST", body: data }),
+  updateBusinessStatus: (id, status) => request(`/businesses/${id}/status`, { method: "PATCH", body: { status } }),
+  updateBusinessPlan: (id, plan) => request(`/businesses/${id}/plan`, { method: "PATCH", body: { plan } }),
+  deleteBusiness: (id) => request(`/businesses/${id}`, { method: "DELETE" }),
+  getBusinessUsers: (id) => request(`/businesses/${id}/users`),
+  createBusinessUser: (id, data) => request(`/businesses/${id}/users`, { method: "POST", body: data }),
+
+  // Productos — usan FormData porque llevan imagen opcional
+  getProducts: () => request("/products"),
+  createProduct: (data) => requestForm("/products", { method: "POST", data }),
+  updateProduct: (id, data) => requestForm(`/products/${id}`, { method: "PUT", data }),
+  deleteProduct: (id) => request(`/products/${id}`, { method: "DELETE" }),
+  adjustStock: (id, delta) => request(`/products/${id}/stock`, { method: "PATCH", body: { delta } }),
+  setStock: (id, stock) => request(`/products/${id}/stock`, { method: "PATCH", body: { set: stock } }),
+
+  // Promos
+  getPromos: () => request("/promos"),
+  createPromo: (data) => request("/promos", { method: "POST", body: data }),
+  updatePromo: (id, data) => request(`/promos/${id}`, { method: "PUT", body: data }),
+  deletePromo: (id) => request(`/promos/${id}`, { method: "DELETE" }),
+  togglePromo: (id) => request(`/promos/${id}/toggle`, { method: "PATCH" }),
+
+  // Órdenes
+  getOrders: () => request("/orders"),
+  createOrder: (data) => request("/orders", { method: "POST", body: data }),
+  updateOrderStatus: (id, status) => request(`/orders/${id}/status`, { method: "PATCH", body: { status } }),
+
+  // Reportes
+  getDashboard: () => request("/reports/dashboard"),
+};
+
+export function saveSession(token, user) {
+  localStorage.setItem("token", token);
+  localStorage.setItem("user", JSON.stringify(user));
+}
+export function getSession() {
+  const token = getToken();
+  const user = localStorage.getItem("user");
+  return token && user ? { token, user: JSON.parse(user) } : null;
+}
+export function clearSession() {
+  localStorage.removeItem("token");
+  localStorage.removeItem("user");
+}

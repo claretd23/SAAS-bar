@@ -108,63 +108,77 @@ const orderCols = db.prepare("PRAGMA table_info(orders)").all().map(c => c.name)
 if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
   console.log("Migracion: convirtiendo orders al modelo de cuenta por mesa...");
 
-  db.exec(`
-    CREATE TABLE orders_new (
-      id TEXT PRIMARY KEY,
-      business_id TEXT NOT NULL,
-      mesa TEXT,
-      items TEXT NOT NULL,
-      note TEXT,
-      disc REAL DEFAULT 0,
-      promo_disc REAL DEFAULT 0,
-      total REAL NOT NULL,
-      is_closed INTEGER NOT NULL DEFAULT 0,
-      created_by_id TEXT,
-      created_by_name TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  // Si una corrida anterior se interrumpio a la mitad (ej. nodemon
+  // reinicio el proceso justo durante la migracion), puede quedar una
+  // orders_new residual. La borramos antes de empezar para que esta
+  // migracion sea segura de reintentar las veces que sea necesario.
+  db.exec("DROP TABLE IF EXISTS orders_new");
 
-  const oldOrders = db.prepare("SELECT * FROM orders").all();
-  const insertNew = db.prepare(`
-    INSERT INTO orders_new (id, business_id, mesa, items, note, disc, promo_disc, total, is_closed, created_by_id, created_by_name, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const insertPayment = db.prepare(`
-    INSERT INTO payments (id, business_id, order_id, amount, pay, charged_by_id, charged_by_name, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  for (const o of oldOrders) {
-    let items = [];
-    try { items = JSON.parse(o.items); } catch { items = []; }
-    const wasCharged = o.status === "cobrado";
-    // Mapea el status viejo de toda la orden al status por item nuevo.
-    const itemStatus = wasCharged ? "listo" : (o.status || "pendiente");
-    const migratedItems = items.map(it => ({
-      ...it,
-      status: itemStatus,
-      paid: wasCharged,
-    }));
-
-    insertNew.run(
-      o.id, o.business_id, String(o.mesa ?? ""), JSON.stringify(migratedItems),
-      o.note || "", o.disc || 0, o.promo_disc || 0, o.total,
-      wasCharged ? 1 : 0, null, null, o.created_at
-    );
-
-    // Si ya estaba cobrada, registra el pago histórico para que los
-    // reportes (que ahora leen de payments) no pierdan ventas pasadas.
-    if (wasCharged) {
-      insertPayment.run(
-        `mig_${o.id}`, o.business_id, o.id, o.total, o.pay || "ef", null, null, o.created_at
+  // Todo el bloque corre en una sola transaccion: si algo falla o el
+  // proceso se reinicia a la mitad, SQLite revierte todo y la tabla
+  // 'orders' original queda intacta para reintentar limpio la proxima vez.
+  const migrateOrders = db.transaction(() => {
+    db.exec(`
+      CREATE TABLE orders_new (
+        id TEXT PRIMARY KEY,
+        business_id TEXT NOT NULL,
+        mesa TEXT,
+        items TEXT NOT NULL,
+        note TEXT,
+        disc REAL DEFAULT 0,
+        promo_disc REAL DEFAULT 0,
+        total REAL NOT NULL,
+        is_closed INTEGER NOT NULL DEFAULT 0,
+        created_by_id TEXT,
+        created_by_name TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
       );
-    }
-  }
+    `);
 
-  db.exec("DROP TABLE orders");
-  db.exec("ALTER TABLE orders_new RENAME TO orders");
-  console.log(`Migracion: ${oldOrders.length} ordenes migradas al nuevo modelo`);
+    const oldOrders = db.prepare("SELECT * FROM orders").all();
+    const insertNew = db.prepare(`
+      INSERT INTO orders_new (id, business_id, mesa, items, note, disc, promo_disc, total, is_closed, created_by_id, created_by_name, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const insertPayment = db.prepare(`
+      INSERT INTO payments (id, business_id, order_id, amount, pay, charged_by_id, charged_by_name, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    for (const o of oldOrders) {
+      let items = [];
+      try { items = JSON.parse(o.items); } catch { items = []; }
+      const wasCharged = o.status === "cobrado";
+      // Mapea el status viejo de toda la orden al status por item nuevo.
+      const itemStatus = wasCharged ? "listo" : (o.status || "pendiente");
+      const migratedItems = items.map(it => ({
+        ...it,
+        status: itemStatus,
+        paid: wasCharged,
+      }));
+
+      insertNew.run(
+        o.id, o.business_id, String(o.mesa ?? ""), JSON.stringify(migratedItems),
+        o.note || "", o.disc || 0, o.promo_disc || 0, o.total,
+        wasCharged ? 1 : 0, null, null, o.created_at
+      );
+
+      // Si ya estaba cobrada, registra el pago histórico para que los
+      // reportes (que ahora leen de payments) no pierdan ventas pasadas.
+      if (wasCharged) {
+        insertPayment.run(
+          `mig_${o.id}`, o.business_id, o.id, o.total, o.pay || "ef", null, null, o.created_at
+        );
+      }
+    }
+
+    db.exec("DROP TABLE orders");
+    db.exec("ALTER TABLE orders_new RENAME TO orders");
+    return oldOrders.length;
+  });
+
+  const migratedCount = migrateOrders();
+  console.log(`Migracion: ${migratedCount} ordenes migradas al nuevo modelo`);
 }
 
 export default db;

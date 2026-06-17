@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { C, fmt, today } from "../styles.js";
 import { api } from "../api.js";
-import { Btn, Badge, Divider } from "./Common.jsx";
+import { Btn, Badge, Divider, Modal } from "./Common.jsx";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
@@ -9,8 +9,8 @@ const CATS_FALLBACK = ["Cervezas", "Licores", "Cócteles", "Botanas"];
 const MESAS = Array.from({ length: 10 }, (_, i) => i + 1);
 const PAY_METHODS = [
   { id: "ef", label: "Efectivo" },
-  { id: "ta", label: "Tarjeta"},
-  { id: "qr", label: "QR/Trans."},
+  { id: "ta", label: "Tarjeta" },
+  { id: "qr", label: "QR/Trans." },
 ];
 
 export default function MeseroView({ user, products, promos, orders, onOrdersChanged, onLogout }) {
@@ -21,15 +21,17 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
   const [cat, setCat] = useState(cats[0]);
   const [cart, setCart] = useState({});
   const [note, setNote] = useState("");
-  const [pay, setPay] = useState("ef");
   const [disc, setDisc] = useState(0);
   const [split, setSplit] = useState(1);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
   const [activePromo, setActivePromo] = useState(null);
+  const [closeModal, setCloseModal] = useState(false);
 
   const activePromos = promos.filter(p => p.active);
-  const mesaOrder = orders.find(o => o.mesa === mesa && o.status !== "cobrado");
+  // La cuenta activa de la mesa: lo que ya se mandó a barra, sin importar
+  // quién lo mandó ni cuántas rondas se hayan acumulado.
+  const mesaOrder = orders.find(o => String(o.mesa) === String(mesa) && !o.is_closed);
   const cartItems = Object.values(cart);
   const sub = cartItems.reduce((s, x) => s + x.price * x.qty, 0);
   const promoDisc = activePromo
@@ -61,7 +63,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
     if (!cartItems.length || sending) return;
     setSending(true);
     try {
-      await api.createOrder({ mesa, items: cartItems, note, pay, disc, promoDisc, total });
+      await api.createOrder({ mesa, items: cartItems, note });
       setCart({}); setNote(""); setDisc(0); setSplit(1); setActivePromo(null);
       setSent(true); setTimeout(() => setSent(false), 2000);
       onOrdersChanged();
@@ -85,7 +87,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {mesaOrder && <Badge color={C.amber}>Mesa {mesa}: {mesaOrder.status}</Badge>}
+          {mesaOrder && <Badge color={C.amber}>Mesa {mesa}: cuenta activa</Badge>}
           <Btn size="sm" variant="ghost" onClick={onLogout}>Salir</Btn>
         </div>
       </div>
@@ -94,7 +96,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
       <div style={{ background: C.bg3, borderBottom: `1px solid ${C.border}`, padding: "8px 12px", overflowX: "auto" }}>
         <div style={{ display: "flex", gap: 6, minWidth: "max-content" }}>
           {MESAS.map(m => {
-            const hasOrder = orders.some(o => o.mesa === m && o.status !== "cobrado");
+            const hasOrder = orders.some(o => String(o.mesa) === String(m) && !o.is_closed);
             return (
               <button key={m} onClick={() => setMesa(m)} style={{
                 padding: "4px 12px", borderRadius: 16,
@@ -145,7 +147,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
           }}>
             {products.filter(p => p.cat === cat).map(p => {
               const inCart = cart[p.id];
-              const agotado = p.stock === 0;
+              const agotado = p.stock === 0 && !p.unlimited_stock;
               return (
                 <div
                   key={p.id}
@@ -193,7 +195,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
                   <div style={{ padding: "7px 8px 10px" }}>
                     <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.3, marginBottom: 3 }}>{p.name}</div>
                     <div style={{ fontSize: 13, color: C.neon, fontWeight: 600 }}>{fmt(p.price)}</div>
-                    {p.stock < 5 && p.stock > 0 && (
+                    {!p.unlimited_stock && p.stock < 5 && p.stock > 0 && (
                       <div style={{ fontSize: 9, color: C.amber, marginTop: 2 }}>Últimas {p.stock}</div>
                     )}
                     {agotado && (
@@ -209,11 +211,17 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
         {/* ── Panel de orden ── */}
         <div style={{ width: 280, background: C.bg2, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontWeight: 500, fontSize: 13 }}>🧾 Orden — Mesa {mesa}</span>
+            <span style={{ fontWeight: 500, fontSize: 13 }}>🧾 Nueva ronda — Mesa {mesa}</span>
             <Btn size="sm" variant="ghost" onClick={() => setCart({})}>Limpiar</Btn>
           </div>
 
-          {/* Items del carrito */}
+          {mesaOrder && (
+            <div style={{ background: C.amber + "15", borderBottom: `1px solid ${C.border}`, padding: "8px 12px", fontSize: 11, color: C.amber }}>
+              Esta mesa ya tiene una cuenta activa de {fmt(mesaOrder.total)}. Lo que agregues aquí se suma a esa cuenta.
+            </div>
+          )}
+
+          {/* Items del carrito (lo que se va a ENVIAR, no la cuenta completa) */}
           <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
             {!cartItems.length && (
               <div style={{ textAlign: "center", color: C.muted, marginTop: 40, fontSize: 12, lineHeight: 2 }}>
@@ -222,7 +230,6 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
             )}
             {cartItems.map(item => (
               <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}` }}>
-                {/* Miniatura o emoji */}
                 {item.image_url ? (
                   <img
                     src={`${API_URL}${item.image_url}`}
@@ -273,7 +280,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
             <Divider />
 
             <div style={{ fontSize: 12, color: C.muted, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-              <span>Subtotal</span><span>{fmt(sub)}</span>
+              <span>Subtotal ronda</span><span>{fmt(sub)}</span>
             </div>
             {(promoDisc > 0 || manualDisc > 0) && (
               <div style={{ fontSize: 12, color: C.amber, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
@@ -281,7 +288,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
               </div>
             )}
             <div style={{ fontSize: 14, fontWeight: 600, display: "flex", justifyContent: "space-between", marginBottom: split > 1 ? 3 : 8 }}>
-              <span>Total</span><span style={{ color: C.neon }}>{fmt(total)}</span>
+              <span>Total ronda</span><span style={{ color: C.neon }}>{fmt(total)}</span>
             </div>
             {split > 1 && (
               <div style={{ fontSize: 12, color: C.neon2, display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
@@ -289,30 +296,126 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
               </div>
             )}
 
-            {/* Método de pago */}
-            <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>
-              {PAY_METHODS.map(m => (
-                <button key={m.id} onClick={() => setPay(m.id)} style={{
-                  flex: 1, padding: "4px 2px", borderRadius: 6, fontSize: 10,
-                  background: pay === m.id ? C.neon2 + "22" : "transparent",
-                  border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
-                  color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
-                }}>{m.icon} {m.label}</button>
-              ))}
-            </div>
-
             {sent ? (
-              <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: "9px", textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500 }}>
-                ✓ Orden enviada a barra
+              <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: "9px", textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+                ✓ Enviado a barra
               </div>
             ) : (
-              <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14 }}>
+              <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
                 {sending ? "Enviando..." : "Enviar a barra"}
+              </Btn>
+            )}
+
+            {/* El método de pago se decide hasta este momento — cuando la
+                mesa pide la cuenta — no al mandar productos a barra. */}
+            {mesaOrder && (
+              <Btn variant="amber" onClick={() => setCloseModal(true)} style={{ width: "100%", fontSize: 13 }}>
+                💳 Cobrar cuenta de la mesa
               </Btn>
             )}
           </div>
         </div>
       </div>
+
+      {closeModal && mesaOrder && (
+        <CloseAccountModal
+          order={mesaOrder}
+          onClose={() => setCloseModal(false)}
+          onPaid={() => { setCloseModal(false); onOrdersChanged(); }}
+        />
+      )}
     </div>
+  );
+}
+
+// Modal de cobro: el mesero elige qué items de la cuenta se están pagando
+// (todos, o solo lo que consumió una persona) y con qué método. Permite
+// pagos parciales: lo pagado se descuenta de lo pendiente de la mesa, y la
+// cuenta sigue abierta hasta que todo esté pagado.
+function CloseAccountModal({ order, onClose, onPaid }) {
+  const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
+  const [selected, setSelected] = useState(new Set(pendingIdx)); // por default: todo
+  const [pay, setPay] = useState("ef");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (idx) => {
+    setSelected(s => {
+      const n = new Set(s);
+      n.has(idx) ? n.delete(idx) : n.add(idx);
+      return n;
+    });
+  };
+
+  const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
+
+  const confirmPay = async () => {
+    if (!selected.size) { setError("Selecciona al menos un producto a cobrar"); return; }
+    setSaving(true); setError("");
+    try {
+      await api.payOrderItems(order.id, pay, [...selected]);
+      onPaid();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Cobrar Mesa ${order.mesa}`} onClose={onClose}>
+      {error && (
+        <div style={{ background: C.red + "22", border: `1px solid ${C.red}`, color: C.red, borderRadius: 8, padding: "8px 12px", fontSize: 12, marginBottom: 10 }}>
+          {error}
+        </div>
+      )}
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+        Selecciona qué se va a pagar ahora. Si alguien se va antes, desmarca lo que no es suyo.
+      </div>
+      <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
+        {order.items.map((item, idx) => (
+          <label key={idx} style={{
+            display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+            borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1,
+            cursor: item.paid ? "default" : "pointer",
+          }}>
+            <input
+              type="checkbox"
+              checked={item.paid || selected.has(idx)}
+              disabled={item.paid}
+              onChange={() => toggle(idx)}
+            />
+            <span style={{ flex: 1, fontSize: 12 }}>
+              {item.qty}× {item.name} {item.paid && <span style={{ color: C.neon, fontSize: 10 }}>(ya pagado)</span>}
+            </span>
+            <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
+          </label>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        {PAY_METHODS.map(m => (
+          <button key={m.id} onClick={() => setPay(m.id)} style={{
+            flex: 1, padding: "6px 2px", borderRadius: 6, fontSize: 11,
+            background: pay === m.id ? C.neon2 + "22" : "transparent",
+            border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
+            color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
+          }}>{m.label}</button>
+        ))}
+      </div>
+
+      <Divider />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
+        <span>A cobrar ahora</span>
+        <span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
+        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>
+          {saving ? "Cobrando..." : "Confirmar pago"}
+        </Btn>
+      </div>
+    </Modal>
   );
 }

@@ -5,10 +5,11 @@ import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.j
 
 const TABS = [
   { id: "dashboard", label: "📊 Dashboard" },
-  { id: "orders", label: "🧾 Órdenes" },
+  { id: "orders", label: "🧾 Mesas" },
   { id: "menu", label: "🍹 Menú" },
   { id: "promos", label: "🏷️ Promos" },
   { id: "inventory", label: "📦 Inventario" },
+  { id: "users", label: "👥 Usuarios" },
 ];
 
 export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
@@ -52,6 +53,7 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
         {tab === "menu" && <MenuTab products={products} onChanged={onProductsChanged} />}
         {tab === "promos" && <PromosTab promos={promos} onChanged={onPromosChanged} />}
         {tab === "inventory" && <InventoryTab products={products} onChanged={onProductsChanged} />}
+        {tab === "users" && <UsersTab businessId={user.businessId} />}
       </div>
     </div>
   );
@@ -65,8 +67,8 @@ function DashboardTab({ data, orders }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
         {[
           { label: "Ventas hoy", value: fmt(data.totalToday || 0), color: C.neon },
-          { label: "Órdenes cobradas", value: data.ordersToday || 0, color: C.blue },
-          { label: "Órdenes activas", value: orders.filter(o => o.status !== "cobrado").length, color: C.amber },
+          { label: "Pagos cobrados", value: data.ordersToday || 0, color: C.blue },
+          { label: "Mesas activas", value: data.activeOrders ?? orders.filter(o => !o.is_closed).length, color: C.amber },
           { label: "Ticket promedio", value: fmt(data.avgTicket || 0), color: C.neon2 },
         ].map(stat => (
           <Card key={stat.label}>
@@ -104,44 +106,146 @@ function DashboardTab({ data, orders }) {
   );
 }
 
-/* ─── Órdenes ─── */
+/* ─── Mesas / cuentas activas ─── */
 function OrdersTab({ orders, onChanged }) {
-  const STATUS_COLOR = { pendiente: C.amber, preparando: C.blue, listo: C.neon, cobrado: C.muted };
-  const STATUS_FLOW = ["pendiente", "preparando", "listo", "cobrado"];
+  const STATUS_COLOR = { pendiente: C.red, preparando: C.amber, listo: C.neon };
+  const STATUS_LABEL = { pendiente: "Pendiente", preparando: "Preparando", listo: "Listo" };
+  const [payModal, setPayModal] = useState(null);
 
-  const advance = async (order) => {
-    const idx = STATUS_FLOW.indexOf(order.status);
-    if (idx >= STATUS_FLOW.length - 1) return;
-    try {
-      await api.updateOrderStatus(order.id, STATUS_FLOW[idx + 1]);
-      onChanged();
-    } catch (e) { alert(e.message); }
-  };
+  const active = orders.filter(o => !o.is_closed);
+  const closed = orders.filter(o => o.is_closed);
 
   return (
     <div className="fade-in">
-      {!orders.length && <div style={{ textAlign: "center", color: C.muted, marginTop: 40 }}>Sin órdenes hoy</div>}
-      {orders.map(order => {
-        const items = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
-        const next = STATUS_FLOW[STATUS_FLOW.indexOf(order.status) + 1];
+      <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>
+        Mesas activas ({active.length})
+      </div>
+      {!active.length && <div style={{ textAlign: "center", color: C.muted, marginTop: 20, marginBottom: 20 }}>Sin mesas abiertas</div>}
+      {active.map(order => {
+        const pending = order.items.filter(it => !it.paid);
+        const paidCount = order.items.length - pending.length;
         return (
-          <Card key={order.id} style={{ marginBottom: 10, borderColor: STATUS_COLOR[order.status] + "55" }}>
+          <Card key={order.id} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-              <span style={{ fontWeight: 600 }}>Mesa {order.mesa}</span>
-              <Badge color={STATUS_COLOR[order.status]}>{order.status}</Badge>
+              <span style={{ fontWeight: 600 }}>
+                {/^B\d+$/.test(String(order.mesa)) ? `Barra ${order.mesa}` : `Mesa ${order.mesa}`}
+              </span>
+              <span style={{ fontSize: 11, color: C.muted }}>
+                {order.created_by_name ? `Atiende: ${order.created_by_name}` : ""}
+              </span>
             </div>
-            <div style={{ fontSize: 12, color: C.muted, marginBottom: 6 }}>
-              {items.map(i => `${i.qty}× ${i.name}`).join(" · ")}
+            <div style={{ marginBottom: 6 }}>
+              {order.items.map((item, idx) => (
+                <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12, opacity: item.paid ? 0.45 : 1 }}>
+                  <span>{item.qty}× {item.name} {item.paid && "✓"}</span>
+                  <Badge color={STATUS_COLOR[item.status] || C.muted}>{STATUS_LABEL[item.status] || item.status}</Badge>
+                </div>
+              ))}
             </div>
             {order.note && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>📝 {order.note}</div>}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontWeight: 600, color: C.neon }}>{fmt(order.total)}</span>
-              {next && <Btn size="sm" variant="primary" onClick={() => advance(order)}>→ {next}</Btn>}
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {paidCount > 0 && <Badge color={C.neon}>{paidCount} pagado{paidCount > 1 ? "s" : ""}</Badge>}
+                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>💳 Cobrar</Btn>
+              </div>
             </div>
           </Card>
         );
       })}
+
+      {closed.length > 0 && (
+        <>
+          <div style={{ fontSize: 12, color: C.muted, margin: "18px 0 8px", textTransform: "uppercase", letterSpacing: 1 }}>
+            Cerradas hoy ({closed.length})
+          </div>
+          {closed.map(order => (
+            <Card key={order.id} style={{ marginBottom: 8, opacity: 0.6 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12 }}>
+                  {/^B\d+$/.test(String(order.mesa)) ? `Barra ${order.mesa}` : `Mesa ${order.mesa}`}
+                </span>
+                <span style={{ color: C.neon, fontSize: 12 }}>{fmt(order.total)}</span>
+              </div>
+            </Card>
+          ))}
+        </>
+      )}
+
+      {payModal && (
+        <AdminPayModal order={payModal} onClose={() => setPayModal(null)} onPaid={() => { setPayModal(null); onChanged(); }} />
+      )}
     </div>
+  );
+}
+
+const PAY_METHODS = [
+  { id: "ef", label: "Efectivo" },
+  { id: "ta", label: "Tarjeta" },
+  { id: "qr", label: "QR/Trans." },
+];
+
+// Mismo flujo de cobro parcial que tiene el mesero: el admin puede cobrar
+// cualquier mesa desde aquí (ej. si el mesero está ocupado), eligiendo qué
+// items se pagan y con qué método.
+function AdminPayModal({ order, onClose, onPaid }) {
+  const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
+  const [selected, setSelected] = useState(new Set(pendingIdx));
+  const [pay, setPay] = useState("ef");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const toggle = (idx) => {
+    setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
+  };
+  const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
+
+  const confirmPay = async () => {
+    if (!selected.size) { setError("Selecciona al menos un producto a cobrar"); return; }
+    setSaving(true); setError("");
+    try {
+      await api.payOrderItems(order.id, pay, [...selected]);
+      onPaid();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={`Cobrar ${/^B\d+$/.test(String(order.mesa)) ? "Barra" : "Mesa"} ${order.mesa}`} onClose={onClose}>
+      <ErrorBanner message={error} />
+      <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
+        {order.items.map((item, idx) => (
+          <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
+            <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
+            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}× {item.name} {item.paid && <span style={{ color: C.neon, fontSize: 10 }}>(pagado)</span>}</span>
+            <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
+          </label>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        {PAY_METHODS.map(m => (
+          <button key={m.id} onClick={() => setPay(m.id)} style={{
+            flex: 1, padding: "6px 2px", borderRadius: 6, fontSize: 11,
+            background: pay === m.id ? C.neon2 + "22" : "transparent",
+            border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
+            color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
+          }}>{m.label}</button>
+        ))}
+      </div>
+      <Divider />
+      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
+        <span>A cobrar ahora</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
+        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>
+          {saving ? "Cobrando..." : "Confirmar pago"}
+        </Btn>
+      </div>
+    </Modal>
   );
 }
 
@@ -428,6 +532,111 @@ function InventoryTab({ products, onChanged }) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+/* ─── Usuarios (meseros, barman, otros admins del negocio) ─── */
+const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
+const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
+
+function UsersTab({ businessId }) {
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [modal, setModal] = useState(false);
+  const [form, setForm] = useState({ name: "", role: "mesero", pin: "" });
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = () => {
+    api.getBusinessUsers(businessId).then(u => { setUsers(u); setLoading(false); }).catch(() => setLoading(false));
+  };
+  useEffect(load, [businessId]);
+
+  const openNew = () => {
+    setForm({ name: "", role: "mesero", pin: "" });
+    setError(""); setModal(true);
+  };
+
+  const save = async () => {
+    if (!form.name.trim()) { setError("El nombre es obligatorio"); return; }
+    if (!/^\d{4,6}$/.test(form.pin)) { setError("El PIN debe ser numérico, de 4 a 6 dígitos"); return; }
+    setSaving(true); setError("");
+    try {
+      await api.createBusinessUser(businessId, form);
+      setModal(false);
+      load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const remove = async (u) => {
+    if (!confirm(`¿Eliminar a ${u.name}? Ya no podrá iniciar sesión.`)) return;
+    try {
+      await api.deleteBusinessUser(businessId, u.id);
+      load();
+    } catch (e) { alert(e.message); }
+  };
+
+  if (loading) return <div style={{ textAlign: "center", color: C.muted, marginTop: 40 }}>Cargando...</div>;
+
+  return (
+    <div className="fade-in">
+      <div style={{ fontSize: 11, color: C.muted, marginBottom: 12 }}>
+        Cada mesero/barman con su propio PIN queda registrado en cada orden y pago que haga —
+        así sabes quién atendió cada mesa y quién cobró cada cuenta.
+      </div>
+      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+        <div style={{ fontSize: 13, fontWeight: 500 }}>{users.length} usuarios</div>
+        <Btn variant="primary" size="sm" onClick={openNew}>+ Nuevo usuario</Btn>
+      </div>
+
+      {users.map(u => (
+        <Card key={u.id} style={{ marginBottom: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 500, fontSize: 13 }}>{u.name}</div>
+              <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
+            </div>
+            <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
+            <Btn size="sm" variant="ghost" onClick={() => remove(u)}>🗑</Btn>
+          </div>
+        </Card>
+      ))}
+
+      {modal && (
+        <Modal title="Nuevo usuario" onClose={() => setModal(false)}>
+          <ErrorBanner message={error} />
+          <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="ej. Karla" />
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: C.muted, marginBottom: 4, textTransform: "uppercase" }}>Rol</div>
+            <div style={{ display: "flex", gap: 8 }}>
+              {["mesero", "barman", "admin"].map(r => (
+                <button key={r} onClick={() => setForm(f => ({ ...f, role: r }))} style={{
+                  flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${form.role === r ? C.neon : C.border}`,
+                  background: form.role === r ? C.neon + "22" : "transparent", color: form.role === r ? C.neon : C.muted,
+                  cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                }}>{ROLE_LABEL[r]}</button>
+              ))}
+            </div>
+          </div>
+          <Input
+            label="PIN (4-6 dígitos, único en este negocio)"
+            value={form.pin}
+            onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))}
+            placeholder="ej. 4521"
+            maxLength={6}
+          />
+          <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+            <Btn variant="ghost" onClick={() => setModal(false)} style={{ flex: 1 }}>Cancelar</Btn>
+            <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
+              {saving ? "Guardando..." : "Guardar"}
+            </Btn>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

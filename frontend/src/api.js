@@ -59,6 +59,7 @@ export const api = {
   deleteBusiness: (id) => request(`/businesses/${id}`, { method: "DELETE" }),
   getBusinessUsers: (id) => request(`/businesses/${id}/users`),
   createBusinessUser: (id, data) => request(`/businesses/${id}/users`, { method: "POST", body: data }),
+  deleteBusinessUser: (id, userId) => request(`/businesses/${id}/users/${userId}`, { method: "DELETE" }),
 
   // Productos — usan FormData porque llevan imagen opcional
   getProducts: () => request("/products"),
@@ -78,7 +79,10 @@ export const api = {
   // Órdenes
   getOrders: () => request("/orders"),
   createOrder: (data) => request("/orders", { method: "POST", body: data }),
-  updateOrderStatus: (id, status) => request(`/orders/${id}/status`, { method: "PATCH", body: { status } }),
+  updateItemStatus: (orderId, itemIndex, status) =>
+    request(`/orders/${orderId}/items/${itemIndex}/status`, { method: "PATCH", body: { status } }),
+  payOrderItems: (orderId, pay, itemIndexes) =>
+    request(`/orders/${orderId}/payments`, { method: "POST", body: { pay, itemIndexes } }),
 
   // Reportes
   getDashboard: () => request("/reports/dashboard"),

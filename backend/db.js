@@ -110,9 +110,13 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
 
   // Si una corrida anterior se interrumpio a la mitad (ej. nodemon
   // reinicio el proceso justo durante la migracion), puede quedar una
-  // orders_new residual. La borramos antes de empezar para que esta
-  // migracion sea segura de reintentar las veces que sea necesario.
+  // orders_new residual, y/o pagos de migracion ya insertados (ids con
+  // el prefijo mig_) de una corrida previa que si alcanzo a insertar
+  // pagos antes de fallar en otro punto. Limpiamos ambos antes de
+  // empezar para que esta migracion sea segura de reintentar las veces
+  // que sea necesario.
   db.exec("DROP TABLE IF EXISTS orders_new");
+  db.exec("DELETE FROM payments WHERE id LIKE 'mig_%'");
 
   // Todo el bloque corre en una sola transaccion: si algo falla o el
   // proceso se reinicia a la mitad, SQLite revierte todo y la tabla

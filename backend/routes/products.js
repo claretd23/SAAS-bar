@@ -25,15 +25,45 @@ const upload = multer({
   storage,
   limits: { fileSize: 3 * 1024 * 1024 }, // 3MB máx
   fileFilter: (req, file, cb) => {
-    const allowed = [".jpg", ".jpeg", ".png", ".webp"];
+    const allowedExt = [".jpg", ".jpeg", ".png", ".webp"];
+    const allowedMime = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowed.includes(ext)) cb(null, true);
-    else cb(new Error("Solo se permiten imágenes JPG, PNG o WebP"));
+
+    // Validamos por extensión O por mimetype. Algunos navegadores/clientes
+    // (capturas de pantalla en Windows, pegado desde portapapeles, ciertos
+    // apps de cámara) no ponen extensión en el nombre del archivo o la
+    // ponen distinta al contenido real — pero el mimetype que manda el
+    // navegador suele ser correcto. Con solo extensión, esos casos se
+    // rechazaban aunque la imagen fuera válida.
+    if (allowedExt.includes(ext) || allowedMime.includes(file.mimetype)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Solo se permiten imágenes JPG, PNG o WebP (recibido: ${file.mimetype || "tipo desconocido"}, nombre: ${file.originalname})`));
+    }
   },
 });
 
 const router = express.Router();
 router.use(authMiddleware);
+
+// Envuelve upload.single("image") para capturar errores de Multer
+// (fileFilter rechazado, archivo muy grande, etc.) y devolverlos como JSON
+// limpio con status 400, en vez de dejar que truenen como excepción sin
+// manejar — antes esos errores solo se veían como stack trace en la
+// consola del servidor y el frontend recibía un error genérico.
+function uploadImage(req, res, next) {
+  upload.single("image")(req, res, (err) => {
+    if (!err) return next();
+    if (err instanceof multer.MulterError) {
+      if (err.code === "LIMIT_FILE_SIZE") {
+        return res.status(400).json({ error: "La imagen no debe superar 3MB" });
+      }
+      return res.status(400).json({ error: `Error subiendo imagen: ${err.message}` });
+    }
+    // Errores lanzados manualmente desde fileFilter (cb(new Error(...)))
+    return res.status(400).json({ error: err.message || "Archivo no válido" });
+  });
+}
 
 // Helper para construir la URL pública de la imagen
 function imageUrl(req, filename) {
@@ -61,7 +91,7 @@ router.get("/", (req, res) => {
 router.post(
   "/",
   requireRole("admin", "superadmin"),
-  upload.single("image"),
+  uploadImage,
   (req, res) => {
     const { name, cat, price, stock, emoji } = req.body;
     if (!name || !cat || price == null) {
@@ -86,7 +116,7 @@ router.post(
 router.put(
   "/:id",
   requireRole("admin", "superadmin"),
-  upload.single("image"),
+  uploadImage,
   (req, res) => {
     const existing = db
       .prepare("SELECT * FROM products WHERE id = ? AND business_id = ?")

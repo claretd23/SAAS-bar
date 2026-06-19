@@ -1,0 +1,2058 @@
+From 19036e3febb81e045c07b13ab7201f9cb3bfabbc Mon Sep 17 00:00:00 2001
+From: claretd23 <claretd23@users.noreply.github.com>
+Date: Fri, 19 Jun 2026 05:46:55 +0000
+Subject: [PATCH] Mejoras UI: sin emojis, busqueda en menu, calculadora cambio,
+ stock ilimitado, mesas/bancos configurables, cobro en barra
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+FRONTEND - Common.jsx:
+- Nuevo componente Icon con SVGs inline para todo el sistema (sin emojis
+  de plataforma, sin librerias externas). 20+ iconos: drink, dashboard,
+  table, cash, card, qr, receipt, trash, etc.
+- Nuevo componente SearchInput reutilizable con icono lupa integrado.
+- X del Modal reemplazada por Icon SVG.
+
+FRONTEND - MeseroView.jsx:
+- Todos los emojis decorativos reemplazados por iconos SVG.
+- Buscador de productos integrado sobre las categorias: al escribir,
+  filtra todos los productos sin importar categoria.
+- Icono generico de copa para productos sin imagen (en vez de emoji).
+- Calculadora de cambio en el modal de cobro: botones rapidos de
+  denominaciones (0/00/00/00/000) + campo libre, muestra
+  el cambio en tiempo real o avisa si falta monto.
+- Numero de mesas configurable con +/- desde la propia barra de mesas
+  (sin recargar, guarda en estado local de la sesion).
+
+FRONTEND - BarmanView.jsx:
+- Todos los emojis reemplazados por iconos SVG.
+- Modal de consumo en barra completamente rediseñado: categorias +
+  buscador + grilla con imagenes (igual que el menu del mesero), en vez
+  de la grilla plana de 3 columnas saturada que habia antes.
+- El barman ahora puede cobrar las cuentas de barra directamente desde
+  su propia vista (boton 'Cobrar barra' en el header, tabs si hay
+  varias cuentas de barra abiertas simultaneamente).
+- Calculadora de cambio identica a la del mesero en el modal de cobro.
+- Iconos SVG para el estado de cada item (advertencia, check, etc.).
+
+FRONTEND - AdminView.jsx:
+- Todos los emojis reemplazados por iconos SVG en tabs, headers,
+  top productos, metodos de pago, botones y badges.
+- PAY_METHODS duplicado eliminado (bug residual de edicion anterior).
+- AdminPayModal: calculadora de cambio con denominaciones rapidas,
+  igual que el mesero y el barman.
+- InventoryTab: toggle de stock ilimitado funcional (llama al nuevo
+  endpoint PATCH /products/:id/unlimited-stock).
+
+BACKEND - products.js:
+- POST y PUT ahora aceptan 'unlimited_stock' en el body.
+- Nuevo endpoint PATCH /:id/unlimited-stock para alternar desde el
+  inventario sin abrir el modal completo de edicion.
+- Se elimina el campo emoji de INSERT/UPDATE (ya no se usa en la UI).
+
+BACKEND - db.js:
+- Migracion de orders ahora es completamente idempotente: limpia
+  orders_new residual, pagos mig_* residuales, y desactiva
+  foreign_keys (fuera de la transaccion, unico lugar valido) antes
+  de hacer DROP TABLE orders.
+---
+ backend/db.js                          |  10 +
+ backend/diagnostico.js                 |  35 +++
+ backend/reset-orders.js                |  20 ++
+ backend/routes/businesses.js           |  19 ++
+ backend/routes/products.js             |  33 +-
+ frontend/src/api.js                    |  20 +-
+ frontend/src/components/AdminView.jsx  | 302 +++++++++++--------
+ frontend/src/components/BarmanView.jsx | 369 +++++++++++++++++------
+ frontend/src/components/Common.jsx     |  56 +++-
+ frontend/src/components/MeseroView.jsx | 397 +++++++++++--------------
+ 10 files changed, 800 insertions(+), 461 deletions(-)
+ create mode 100644 backend/diagnostico.js
+ create mode 100644 backend/reset-orders.js
+
+diff --git a/backend/db.js b/backend/db.js
+index b8bfc5f..e605aee 100644
+--- a/backend/db.js
++++ b/backend/db.js
+@@ -99,6 +99,16 @@ if (!productCols.includes("unlimited_stock")) {
+   console.log("Migracion: columna unlimited_stock agregada a products");
+ }
+ 
++const bizCols = db.prepare("PRAGMA table_info(businesses)").all().map(c => c.name);
++if (!bizCols.includes("mesa_count")) {
++  db.exec("ALTER TABLE businesses ADD COLUMN mesa_count INTEGER NOT NULL DEFAULT 10");
++  console.log("Migracion: columna mesa_count agregada a businesses");
++}
++if (!bizCols.includes("barra_count")) {
++  db.exec("ALTER TABLE businesses ADD COLUMN barra_count INTEGER NOT NULL DEFAULT 4");
++  console.log("Migracion: columna barra_count agregada a businesses");
++}
++
+ // Migración de orders al modelo de "cuenta por mesa": antes cada orden tenía
+ // un solo status y un solo método de pago para toda la orden. Ahora cada
+ // item dentro de la orden tiene su propio status (pendiente/preparando/listo)
+diff --git a/backend/diagnostico.js b/backend/diagnostico.js
+new file mode 100644
+index 0000000..1d1196e
+--- /dev/null
++++ b/backend/diagnostico.js
+@@ -0,0 +1,35 @@
++import Database from "better-sqlite3";
++import { fileURLToPath } from "url";
++import path from "path";
++
++const __dirname = path.dirname(fileURLToPath(import.meta.url));
++const db = new Database(path.join(__dirname, "barpos.db"));
++
++console.log("=== foreign_keys actual ===");
++console.log(db.pragma("foreign_keys", { simple: true }));
++
++console.log("\n=== Todas las tablas ===");
++console.log(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all());
++
++console.log("\n=== foreign_key_list de TODAS las tablas (buscamos quién referencia a orders) ===");
++const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all();
++for (const t of tables) {
++  const fks = db.prepare(`PRAGMA foreign_key_list(${t.name})`).all();
++  if (fks.length) {
++    console.log(`Tabla ${t.name}:`, fks);
++  }
++}
++
++console.log("\n=== foreign_key_check (filas que YA rompen alguna FK ahora mismo) ===");
++console.log(db.prepare("PRAGMA foreign_key_check").all());
++
++console.log("\n=== Columnas actuales de orders ===");
++console.log(db.prepare("PRAGMA table_info(orders)").all().map(c => c.name));
++
++console.log("\n=== Filas en payments ===");
++console.log(db.prepare("SELECT id, order_id FROM payments").all());
++
++console.log("\n=== sqlite_master de orders_new si existe ===");
++console.log(db.prepare("SELECT name, sql FROM sqlite_master WHERE name='orders_new'").all());
++
++db.close();
+diff --git a/backend/reset-orders.js b/backend/reset-orders.js
+new file mode 100644
+index 0000000..27f4c10
+--- /dev/null
++++ b/backend/reset-orders.js
+@@ -0,0 +1,20 @@
++import Database from "better-sqlite3";
++import { fileURLToPath } from "url";
++import path from "path";
++import fs from "fs";
++
++const __dirname = path.dirname(fileURLToPath(import.meta.url));
++const dbPath = path.join(__dirname, "barpos.db");
++const db = new Database(dbPath);
++
++// Borra TODO el contenido de orders y payments (y la tabla orders_new
++// residual si quedo de algun intento anterior), dejando intactos
++// businesses, users, products y promos.
++db.exec("DROP TABLE IF EXISTS orders_new");
++db.exec("DELETE FROM payments");
++db.exec("DELETE FROM orders");
++
++console.log("Listo: orders y payments vaciados. businesses, users, products y promos quedaron intactos.");
++console.log("Ahora puedes levantar el backend normalmente (node server.js o npm run dev).");
++
++db.close();
+diff --git a/backend/routes/businesses.js b/backend/routes/businesses.js
+index bb16eca..3ce0553 100644
+--- a/backend/routes/businesses.js
++++ b/backend/routes/businesses.js
+@@ -100,4 +100,23 @@ router.delete("/:id/users/:userId", ownBusinessOrSuperadmin, (req, res) => {
+   res.json({ ok: true });
+ });
+ 
++// Configuración del negocio: número de mesas y bancos de barra.
++// El admin puede cambiar esto para adaptarlo a su local físico.
++router.get("/:id/config", ownBusinessOrSuperadmin, (req, res) => {
++  const biz = db.prepare("SELECT mesa_count, barra_count FROM businesses WHERE id = ?").get(req.params.id);
++  if (!biz) return res.status(404).json({ error: "Negocio no encontrado" });
++  res.json(biz);
++});
++
++router.patch("/:id/config", ownBusinessOrSuperadmin, (req, res) => {
++  const { mesa_count, barra_count } = req.body;
++  if (mesa_count != null && (mesa_count < 1 || mesa_count > 50)) return res.status(400).json({ error: "El número de mesas debe estar entre 1 y 50" });
++  if (barra_count != null && (barra_count < 0 || barra_count > 20)) return res.status(400).json({ error: "El número de bancos debe estar entre 0 y 20" });
++  const biz = db.prepare("SELECT * FROM businesses WHERE id = ?").get(req.params.id);
++  if (!biz) return res.status(404).json({ error: "Negocio no encontrado" });
++  db.prepare("UPDATE businesses SET mesa_count = ?, barra_count = ? WHERE id = ?")
++    .run(mesa_count ?? biz.mesa_count, barra_count ?? biz.barra_count, req.params.id);
++  res.json({ ok: true });
++});
++
+ export default router;
+\ No newline at end of file
+diff --git a/backend/routes/products.js b/backend/routes/products.js
+index b5c198a..1a0fdb4 100644
+--- a/backend/routes/products.js
++++ b/backend/routes/products.js
+@@ -93,7 +93,7 @@ router.post(
+   requireRole("admin", "superadmin"),
+   uploadImage,
+   (req, res) => {
+-    const { name, cat, price, stock, emoji } = req.body;
++    const { name, cat, price, stock, unlimited_stock } = req.body;
+     if (!name || !cat || price == null) {
+       if (req.file) fs.unlinkSync(req.file.path);
+       return res.status(400).json({ error: "name, cat y price son obligatorios" });
+@@ -101,10 +101,11 @@ router.post(
+     const id = nanoid(10);
+     const filename = req.file ? req.file.filename : null;
+     const imgUrl = filename ? `/uploads/${filename}` : null;
++    const isUnlimited = unlimited_stock === "true" || unlimited_stock === true ? 1 : 0;
+ 
+     db.prepare(
+-      "INSERT INTO products (id, business_id, name, cat, price, stock, emoji, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+-    ).run(id, req.user.businessId, name, cat, +price, +stock || 0, emoji || "🍹", imgUrl);
++      "INSERT INTO products (id, business_id, name, cat, price, stock, image_url, unlimited_stock) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
++    ).run(id, req.user.businessId, name, cat, +price, isUnlimited ? 0 : (+stock || 0), imgUrl, isUnlimited);
+ 
+     const product = db.prepare("SELECT * FROM products WHERE id = ?").get(id);
+     req.app.get("io").to(req.user.businessId).emit("products_updated");
+@@ -126,7 +127,7 @@ router.put(
+       return res.status(404).json({ error: "Producto no encontrado" });
+     }
+ 
+-    const { name, cat, price, stock, emoji, remove_image } = req.body;
++    const { name, cat, price, stock, unlimited_stock, remove_image } = req.body;
+ 
+     let imgUrl = existing.image_url;
+ 
+@@ -140,15 +141,19 @@ router.put(
+       imgUrl = null;
+     }
+ 
++    const isUnlimited = unlimited_stock != null
++      ? (unlimited_stock === "true" || unlimited_stock === true ? 1 : 0)
++      : existing.unlimited_stock;
++
+     db.prepare(
+-      "UPDATE products SET name=?, cat=?, price=?, stock=?, emoji=?, image_url=? WHERE id=?"
++      "UPDATE products SET name=?, cat=?, price=?, stock=?, image_url=?, unlimited_stock=? WHERE id=?"
+     ).run(
+       name ?? existing.name,
+       cat ?? existing.cat,
+       price != null ? +price : existing.price,
+-      stock != null ? +stock : existing.stock,
+-      emoji ?? existing.emoji,
++      isUnlimited ? 0 : (stock != null ? +stock : existing.stock),
+       imgUrl,
++      isUnlimited,
+       req.params.id
+     );
+ 
+@@ -191,4 +196,18 @@ router.patch("/:id/stock", requireRole("admin", "superadmin"), (req, res) => {
+   res.json({ ok: true, stock: newStock });
+ });
+ 
++// PATCH — activar/desactivar stock ilimitado (bebidas preparadas tipo
++// mojito, donde no tiene sentido contar unidad por unidad)
++router.patch("/:id/unlimited-stock", requireRole("admin", "superadmin"), (req, res) => {
++  const product = db
++    .prepare("SELECT * FROM products WHERE id = ? AND business_id = ?")
++    .get(req.params.id, req.user.businessId);
++  if (!product) return res.status(404).json({ error: "Producto no encontrado" });
++
++  const isUnlimited = req.body.unlimited_stock ? 1 : 0;
++  db.prepare("UPDATE products SET unlimited_stock = ? WHERE id = ?").run(isUnlimited, req.params.id);
++  req.app.get("io").to(req.user.businessId).emit("products_updated");
++  res.json({ ok: true, unlimited_stock: !!isUnlimited });
++});
++
+ export default router;
+\ No newline at end of file
+diff --git a/frontend/src/api.js b/frontend/src/api.js
+index ad4fc8c..622afc6 100644
+--- a/frontend/src/api.js
++++ b/frontend/src/api.js
+@@ -14,7 +14,6 @@ async function request(path, { method = "GET", body } = {}) {
+     },
+     body: body ? JSON.stringify(body) : undefined,
+   });
+-
+   if (!res.ok) {
+     const err = await res.json().catch(() => ({ error: "Error de conexión" }));
+     throw new Error(err.error || "Error desconocido");
+@@ -22,23 +21,15 @@ async function request(path, { method = "GET", body } = {}) {
+   return res.json();
+ }
+ 
+-// Petición con FormData (para subir imágenes — NO pone Content-Type, el browser lo hace solo)
+ async function requestForm(path, { method = "POST", data } = {}) {
+   const token = getToken();
+   const form = new FormData();
+-  Object.entries(data).forEach(([k, v]) => {
+-    if (v != null) form.append(k, v);
+-  });
+-
++  Object.entries(data).forEach(([k, v]) => { if (v != null) form.append(k, v); });
+   const res = await fetch(`${API_URL}/api${path}`, {
+     method,
+-    headers: {
+-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+-      // ⚠️ NO pongas Content-Type aquí — el browser lo agrega con el boundary correcto
+-    },
++    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+     body: form,
+   });
+-
+   if (!res.ok) {
+     const err = await res.json().catch(() => ({ error: "Error de conexión" }));
+     throw new Error(err.error || "Error desconocido");
+@@ -51,7 +42,7 @@ export const api = {
+   login: (businessId, pin) => request("/auth/login", { method: "POST", body: { businessId, pin } }),
+   superadminLogin: (password) => request("/auth/superadmin-login", { method: "POST", body: { password } }),
+ 
+-  // Negocios (super-admin)
++  // Negocios (superadmin)
+   getBusinesses: () => request("/businesses"),
+   createBusiness: (data) => request("/businesses", { method: "POST", body: data }),
+   updateBusinessStatus: (id, status) => request(`/businesses/${id}/status`, { method: "PATCH", body: { status } }),
+@@ -61,13 +52,14 @@ export const api = {
+   createBusinessUser: (id, data) => request(`/businesses/${id}/users`, { method: "POST", body: data }),
+   deleteBusinessUser: (id, userId) => request(`/businesses/${id}/users/${userId}`, { method: "DELETE" }),
+ 
+-  // Productos — usan FormData porque llevan imagen opcional
++  // Productos
+   getProducts: () => request("/products"),
+   createProduct: (data) => requestForm("/products", { method: "POST", data }),
+   updateProduct: (id, data) => requestForm(`/products/${id}`, { method: "PUT", data }),
+   deleteProduct: (id) => request(`/products/${id}`, { method: "DELETE" }),
+   adjustStock: (id, delta) => request(`/products/${id}/stock`, { method: "PATCH", body: { delta } }),
+   setStock: (id, stock) => request(`/products/${id}/stock`, { method: "PATCH", body: { set: stock } }),
++  toggleUnlimitedStock: (id, val) => request(`/products/${id}/unlimited-stock`, { method: "PATCH", body: { unlimited_stock: val } }),
+ 
+   // Promos
+   getPromos: () => request("/promos"),
+@@ -100,4 +92,4 @@ export function getSession() {
+ export function clearSession() {
+   localStorage.removeItem("token");
+   localStorage.removeItem("user");
+-}
+\ No newline at end of file
++}
+diff --git a/frontend/src/components/AdminView.jsx b/frontend/src/components/AdminView.jsx
+index cbd243f..45d53eb 100644
+--- a/frontend/src/components/AdminView.jsx
++++ b/frontend/src/components/AdminView.jsx
+@@ -1,15 +1,15 @@
+ import { useState, useEffect } from "react";
+ import { C, fmt, today } from "../styles.js";
+ import { api } from "../api.js";
+-import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.jsx";
++import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider, Icon, SearchInput } from "./Common.jsx";
+ 
+ const TABS = [
+-  { id: "dashboard", label: "📊 Dashboard" },
+-  { id: "orders", label: "🧾 Mesas" },
+-  { id: "menu", label: "🍹 Menú" },
+-  { id: "promos", label: "🏷️ Promos" },
+-  { id: "inventory", label: "📦 Inventario" },
+-  { id: "users", label: "👥 Usuarios" },
++  { id: "dashboard", label: "Dashboard",   icon: "dashboard" },
++  { id: "orders",    label: "Mesas",        icon: "table"     },
++  { id: "menu",      label: "Menu",         icon: "drink"     },
++  { id: "promos",    label: "Promos",       icon: "tag"       },
++  { id: "inventory", label: "Inventario",   icon: "box"       },
++  { id: "users",     label: "Usuarios",     icon: "users"     },
+ ];
+ 
+ export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
+@@ -27,9 +27,9 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
+       {/* Header */}
+       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+-          <span style={{ fontSize: 20 }}>📊</span>
++          <Icon name="dashboard" size={20} color={C.neon} />
+           <div>
+-            <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>ADMIN</div>
++            <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>ADMIN — {user.name || ""}</div>
+             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
+           </div>
+         </div>
+@@ -40,10 +40,13 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
+       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, display: "flex", overflowX: "auto" }}>
+         {TABS.map(t => (
+           <button key={t.id} onClick={() => setTab(t.id)} style={{
+-            padding: "10px 16px", border: "none", borderBottom: `2px solid ${tab === t.id ? C.neon : "transparent"}`,
++            padding: "10px 14px", border: "none", borderBottom: `2px solid ${tab === t.id ? C.neon : "transparent"}`,
+             background: "transparent", color: tab === t.id ? C.neon : C.muted,
+             fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit", fontWeight: 500,
+-          }}>{t.label}</button>
++            display: "flex", alignItems: "center", gap: 5,
++          }}>
++            <Icon name={t.icon} size={13} color={tab === t.id ? C.neon : C.muted} /> {t.label}
++          </button>
+         ))}
+       </div>
+ 
+@@ -83,7 +86,9 @@ function DashboardTab({ data, orders }) {
+           {data.topProducts.map((p, i) => (
+             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
+               <span style={{ color: C.muted, fontSize: 11, minWidth: 16 }}>#{i + 1}</span>
+-              <span style={{ fontSize: 16 }}>{p.emoji}</span>
++              <div style={{ width: 24, height: 24, borderRadius: 4, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center" }}>
++                <Icon name="drink" size={14} color={C.muted} />
++              </div>
+               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+               <Badge color={C.neon}>{p.qty} vendidos</Badge>
+               <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.total)}</span>
+@@ -96,7 +101,7 @@ function DashboardTab({ data, orders }) {
+           <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>Por método de pago</div>
+           {data.byPayMethod.map(m => (
+             <div key={m.pay} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
+-              <span>{m.pay === "ef" ? "💵 Efectivo" : m.pay === "ta" ? "💳 Tarjeta" : "📱 QR/Trans."}</span>
++              <span>{m.pay === "ef" ? "Efectivo" : m.pay === "ta" ? "Tarjeta" : "QR/Transferencia"}</span>
+               <span style={{ color: C.neon }}>{fmt(m.total)}</span>
+             </div>
+           ))}
+@@ -137,17 +142,17 @@ function OrdersTab({ orders, onChanged }) {
+             <div style={{ marginBottom: 6 }}>
+               {order.items.map((item, idx) => (
+                 <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12, opacity: item.paid ? 0.45 : 1 }}>
+-                  <span>{item.qty}× {item.name} {item.paid && "✓"}</span>
++                  <span>{item.qty}× {item.name} {item.paid && <Icon name="check" size={10} color={C.neon} />}</span>
+                   <Badge color={STATUS_COLOR[item.status] || C.muted}>{STATUS_LABEL[item.status] || item.status}</Badge>
+                 </div>
+               ))}
+             </div>
+-            {order.note && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>📝 {order.note}</div>}
++            {order.note && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6, display: "flex", gap: 4, alignItems: "center" }}><Icon name="note" size={11} color={C.amber} /> {order.note}</div>}
+             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+               <span style={{ fontWeight: 600, color: C.neon }}>{fmt(order.total)}</span>
+               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                 {paidCount > 0 && <Badge color={C.neon}>{paidCount} pagado{paidCount > 1 ? "s" : ""}</Badge>}
+-                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>💳 Cobrar</Btn>
++                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}><Icon name="cash" size={12} color="#000" /> Cobrar</Btn>
+               </div>
+             </div>
+           </Card>
+@@ -180,64 +185,90 @@ function OrdersTab({ orders, onChanged }) {
+ }
+ 
+ const PAY_METHODS = [
+-  { id: "ef", label: "Efectivo" },
+-  { id: "ta", label: "Tarjeta" },
+-  { id: "qr", label: "QR/Trans." },
++  { id: "ef", label: "Efectivo", icon: "cash" },
++  { id: "ta", label: "Tarjeta", icon: "card" },
++  { id: "qr", label: "QR/Trans.", icon: "qr" },
+ ];
+ 
+-// Mismo flujo de cobro parcial que tiene el mesero: el admin puede cobrar
+-// cualquier mesa desde aquí (ej. si el mesero está ocupado), eligiendo qué
+-// items se pagan y con qué método.
+ function AdminPayModal({ order, onClose, onPaid }) {
+   const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
+   const [selected, setSelected] = useState(new Set(pendingIdx));
+   const [pay, setPay] = useState("ef");
++  const [cash, setCash] = useState("");
+   const [saving, setSaving] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const toggle = (idx) => {
+-    setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
+-  };
++  const toggle = (idx) => setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
+   const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
++  const cashNum = parseFloat(cash) || 0;
++  const change = cashNum > 0 ? cashNum - selectedTotal : null;
+ 
+   const confirmPay = async () => {
+     if (!selected.size) { setError("Selecciona al menos un producto a cobrar"); return; }
++    if (pay === "ef" && cashNum > 0 && cashNum < selectedTotal) { setError("El monto recibido es menor al total"); return; }
+     setSaving(true); setError("");
+-    try {
+-      await api.payOrderItems(order.id, pay, [...selected]);
+-      onPaid();
+-    } catch (e) {
+-      setError(e.message);
+-    } finally {
+-      setSaving(false);
+-    }
++    try { await api.payOrderItems(order.id, pay, [...selected]); onPaid(); }
++    catch (e) { setError(e.message); } finally { setSaving(false); }
+   };
+ 
+   return (
+     <Modal title={`Cobrar ${/^B\d+$/.test(String(order.mesa)) ? "Barra" : "Mesa"} ${order.mesa}`} onClose={onClose}>
+       <ErrorBanner message={error} />
+-      <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
++      <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 10 }}>
+         {order.items.map((item, idx) => (
+           <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
+             <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
+-            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}× {item.name} {item.paid && <span style={{ color: C.neon, fontSize: 10 }}>(pagado)</span>}</span>
++            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}x {item.name}{item.paid && <span style={{ color: C.neon, fontSize: 10 }}> (pagado)</span>}</span>
+             <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
+           </label>
+         ))}
+       </div>
+-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
++
++      <div style={{ display: "flex", gap: 6, marginBottom: pay === "ef" ? 8 : 12 }}>
+         {PAY_METHODS.map(m => (
+-          <button key={m.id} onClick={() => setPay(m.id)} style={{
+-            flex: 1, padding: "6px 2px", borderRadius: 6, fontSize: 11,
++          <button key={m.id} onClick={() => { setPay(m.id); setCash(""); }} style={{
++            flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, cursor: "pointer",
+             background: pay === m.id ? C.neon2 + "22" : "transparent",
+             border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
+-            color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
+-          }}>{m.label}</button>
++            color: pay === m.id ? C.neon2 : C.muted,
++            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
++          }}>
++            <Icon name={m.icon} size={16} color={pay === m.id ? C.neon2 : C.muted} />
++            {m.label}
++          </button>
+         ))}
+       </div>
++
++      {pay === "ef" && (
++        <div style={{ background: C.bg3, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
++          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Monto recibido en efectivo</div>
++          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
++            {[50, 100, 200, 500, 1000].map(d => (
++              <button key={d} onClick={() => setCash(String(d))} style={{
++                padding: "4px 10px", borderRadius: 8, fontSize: 12,
++                background: cash === String(d) ? C.neon + "22" : C.bg4,
++                border: `1px solid ${cash === String(d) ? C.neon : C.border}`,
++                color: cash === String(d) ? C.neon : C.muted, cursor: "pointer",
++              }}>${d}</button>
++            ))}
++          </div>
++          <input type="number" min="0" value={cash} onChange={e => setCash(e.target.value)} placeholder="Otro monto..."
++            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border2}`, borderRadius: 8, color: C.text, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" }} />
++          {change !== null && change >= 0 && (
++            <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
++              <span style={{ fontSize: 12, color: C.muted }}>Cambio</span>
++              <span style={{ fontSize: 20, fontWeight: 700, color: C.neon }}>{fmt(change)}</span>
++            </div>
++          )}
++          {change !== null && change < 0 && (
++            <div style={{ marginTop: 8, fontSize: 12, color: C.red }}>Faltan {fmt(Math.abs(change))}</div>
++          )}
++        </div>
++      )}
++
+       <Divider />
+       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
+-        <span>A cobrar ahora</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
++        <span>Total</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
+       </div>
+       <div style={{ display: "flex", gap: 8 }}>
+         <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
+@@ -253,8 +284,9 @@ function AdminPayModal({ order, onClose, onPaid }) {
+ function MenuTab({ products, onChanged }) {
+   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+   const [modal, setModal] = useState(null);
++  const [search, setSearch] = useState("");
+   const [form, setForm] = useState({
+-    name: "", cat: "", price: "", stock: "", emoji: "🍹",
++    name: "", cat: "", price: "", stock: "", unlimited_stock: false,
+     imageFile: null, previewUrl: null, remove_image: false,
+   });
+   const [error, setError] = useState("");
+@@ -262,11 +294,12 @@ function MenuTab({ products, onChanged }) {
+ 
+   const open = (p = null) => {
+     setForm(p ? {
+-      name: p.name, cat: p.cat, price: p.price, stock: p.stock, emoji: p.emoji,
++      name: p.name, cat: p.cat, price: p.price, stock: p.stock,
++      unlimited_stock: !!p.unlimited_stock,
+       imageFile: null, previewUrl: p.image_url ? `${API_URL}${p.image_url}` : null,
+       remove_image: false,
+     } : {
+-      name: "", cat: "", price: "", stock: "", emoji: "🍹",
++      name: "", cat: "", price: "", stock: "", unlimited_stock: false,
+       imageFile: null, previewUrl: null, remove_image: false,
+     });
+     setModal(p || "new");
+@@ -276,86 +309,70 @@ function MenuTab({ products, onChanged }) {
+   const handleImageChange = (e) => {
+     const file = e.target.files[0];
+     if (!file) return;
+-    setForm(f => ({
+-      ...f,
+-      imageFile: file,
+-      previewUrl: URL.createObjectURL(file),
+-      remove_image: false,
+-    }));
++    setForm(f => ({ ...f, imageFile: file, previewUrl: URL.createObjectURL(file), remove_image: false }));
+   };
+ 
+-  const removeImage = () => {
+-    setForm(f => ({ ...f, imageFile: null, previewUrl: null, remove_image: true }));
+-  };
++  const removeImage = () => setForm(f => ({ ...f, imageFile: null, previewUrl: null, remove_image: true }));
+ 
+   const save = async () => {
+-    if (!form.name || !form.cat || !form.price) {
+-      setError("Nombre, categoría y precio son obligatorios");
+-      return;
+-    }
++    if (!form.name || !form.cat || !form.price) { setError("Nombre, categoría y precio son obligatorios"); return; }
+     setSaving(true);
+     try {
+       const payload = {
+-        name: form.name,
+-        cat: form.cat,
+-        price: form.price,
+-        stock: form.stock || 0,
+-        emoji: form.emoji,
++        name: form.name, cat: form.cat, price: form.price,
++        stock: form.unlimited_stock ? 0 : (form.stock || 0),
++        unlimited_stock: form.unlimited_stock ? "true" : "false",
+         ...(form.imageFile ? { image: form.imageFile } : {}),
+         ...(form.remove_image ? { remove_image: "true" } : {}),
+       };
+-      if (modal === "new") {
+-        await api.createProduct(payload);
+-      } else {
+-        await api.updateProduct(modal.id, payload);
+-      }
+-      onChanged();
+-      setModal(null);
+-    } catch (e) {
+-      setError(e.message);
+-    } finally {
+-      setSaving(false);
+-    }
++      if (modal === "new") await api.createProduct(payload);
++      else await api.updateProduct(modal.id, payload);
++      onChanged(); setModal(null);
++    } catch (e) { setError(e.message); } finally { setSaving(false); }
+   };
+ 
+   const del = async (id) => {
+-    if (!confirm("¿Eliminar producto?")) return;
++    if (!confirm("Eliminar producto?")) return;
+     try { await api.deleteProduct(id); onChanged(); } catch (e) { alert(e.message); }
+   };
+ 
+   const cats = [...new Set(products.map(p => p.cat))];
++  const filtered = products.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()));
++  const filteredCats = search ? ["Resultados"] : cats;
++  const getProducts = (cat) => search ? filtered : products.filter(p => p.cat === cat);
+ 
+   return (
+     <div className="fade-in">
+-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
++      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+         <div style={{ fontSize: 13, fontWeight: 500 }}>{products.length} productos</div>
+-        <Btn variant="primary" size="sm" onClick={() => open()}>+ Nuevo</Btn>
++        <Btn variant="primary" size="sm" onClick={() => open()}>
++          <Icon name="plus" size={13} /> Nuevo
++        </Btn>
+       </div>
++      <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..." />
+ 
+-      {cats.map(cat => (
++      {filteredCats.map(cat => (
+         <div key={cat} style={{ marginBottom: 14 }}>
+           <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
+-          {products.filter(p => p.cat === cat).map(p => (
++          {getProducts(cat).map(p => (
+             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
+-              {/* Imagen o emoji */}
+-              {p.image_url ? (
+-                <img
+-                  src={`${API_URL}${p.image_url}`}
+-                  alt={p.name}
+-                  style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+-                />
+-              ) : (
+-                <span style={{ fontSize: 24, width: 36, textAlign: "center" }}>{p.emoji}</span>
+-              )}
++              {p.image_url
++                ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
++                : <div style={{ width: 36, height: 36, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="drink" size={18} color={C.muted} /></div>
++              }
+               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+-              <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
+-              <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
+-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
+-              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}>🗑️</Btn>
++              <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.price)}</span>
++              {p.unlimited_stock
++                ? <Badge color={C.neon2}>Ilimitado</Badge>
++                : <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
++              }
++              <Btn size="sm" variant="ghost" onClick={() => open(p)}><Icon name="edit" size={13} /></Btn>
++              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}><Icon name="trash" size={13} /></Btn>
+             </div>
+           ))}
+         </div>
+       ))}
++      {search && !filtered.length && <div style={{ textAlign: "center", color: C.muted, padding: "30px 0", fontSize: 12 }}>Sin resultados</div>}
+ 
+       {modal && (
+         <Modal title={modal === "new" ? "Nuevo producto" : "Editar producto"} onClose={() => setModal(null)}>
+@@ -364,40 +381,40 @@ function MenuTab({ products, onChanged }) {
+           {/* Preview de imagen */}
+           <div style={{ marginBottom: 14 }}>
+             {form.previewUrl ? (
+-              <div style={{ position: "relative", display: "inline-block" }}>
+-                <img
+-                  src={form.previewUrl}
+-                  alt="preview"
+-                  style={{ width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border2}` }}
+-                />
+-                <button
+-                  onClick={removeImage}
+-                  style={{
+-                    position: "absolute", top: 6, right: 6,
+-                    background: "#000a", border: "none", color: "#fff",
+-                    borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 12,
+-                  }}
+-                >✕</button>
++              <div style={{ position: "relative" }}>
++                <img src={form.previewUrl} alt="preview" style={{ width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border2}` }} />
++                <button onClick={removeImage} style={{ position: "absolute", top: 6, right: 6, background: "#000a", border: "none", color: "#fff", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
++                  <Icon name="close" size={12} color="#fff" />
++                </button>
+               </div>
+             ) : (
+-              <label style={{
+-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+-                height: 100, border: `2px dashed ${C.border2}`, borderRadius: 10,
+-                color: C.muted, cursor: "pointer", fontSize: 12, gap: 6,
+-              }}>
+-                <span style={{ fontSize: 24 }}>📷</span>
++              <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 100, border: `2px dashed ${C.border2}`, borderRadius: 10, color: C.muted, cursor: "pointer", fontSize: 12, gap: 6 }}>
++                <Icon name="camera" size={24} color={C.muted} />
+                 <span>Toca para subir imagen</span>
+-                <span style={{ fontSize: 10 }}>JPG, PNG o WebP · máx 3 MB</span>
++                <span style={{ fontSize: 10 }}>JPG, PNG o WebP — max 3 MB</span>
+                 <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: "none" }} />
+               </label>
+             )}
+           </div>
+ 
+-          <Input label="Emoji (si no hay imagen)" value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} />
+           <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+-          <Input label="Categoría" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cócteles" />
++          <Input label="Categoria" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cocteles" />
+           <Input label="Precio" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
+-          <Input label="Stock inicial" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
++
++          {/* Toggle stock ilimitado */}
++          <div style={{ marginBottom: 12 }}>
++            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer", padding: "8px 10px", background: C.bg3, borderRadius: 8, border: `1px solid ${form.unlimited_stock ? C.neon2 : C.border}` }}>
++              <input type="checkbox" checked={form.unlimited_stock} onChange={e => setForm(f => ({ ...f, unlimited_stock: e.target.checked, stock: e.target.checked ? "" : f.stock }))} />
++              <div>
++                <div style={{ fontSize: 13, color: form.unlimited_stock ? C.neon2 : C.text }}>Stock ilimitado</div>
++                <div style={{ fontSize: 10, color: C.muted }}>Para bebidas preparadas donde no lleva inventario por unidad (mojitos, cocteles)</div>
++              </div>
++            </label>
++          </div>
++
++          {!form.unlimited_stock && (
++            <Input label="Stock inicial" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
++          )}
+ 
+           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+             <Btn variant="ghost" onClick={() => setModal(null)} style={{ flex: 1 }}>Cancelar</Btn>
+@@ -498,40 +515,67 @@ function PromosTab({ promos, onChanged }) {
+ function InventoryTab({ products, onChanged }) {
+   const [editing, setEditing] = useState(null);
+   const [val, setVal] = useState("");
++  const [search, setSearch] = useState("");
+ 
+   const adjust = async (id, delta) => {
+     try { await api.adjustStock(id, delta); onChanged(); } catch (e) { alert(e.message); }
+   };
+-
+   const setStock = async (id) => {
+     const n = parseInt(val);
+     if (isNaN(n) || n < 0) return;
+     try { await api.setStock(id, n); onChanged(); setEditing(null); } catch (e) { alert(e.message); }
+   };
++  const toggleUnlimited = async (p) => {
++    try { await api.toggleUnlimitedStock(p.id, !p.unlimited_stock); onChanged(); } catch (e) { alert(e.message); }
++  };
++
++  const filtered = products.filter(p => !search || p.name.toLowerCase().includes(search.toLowerCase()));
+ 
+   return (
+     <div className="fade-in">
+-      {products.map(p => (
+-        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
+-          <span style={{ fontSize: 18 }}>{p.emoji}</span>
+-          <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+-          {editing === p.id ? (
++      <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..." />
++      {filtered.map(p => (
++        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
++          {p.image_url
++            ? <img src={`${import.meta.env.VITE_API_URL || "http://localhost:4000"}${p.image_url}`} alt={p.name} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
++            : <div style={{ width: 32, height: 32, borderRadius: 6, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}><Icon name="drink" size={16} color={C.muted} /></div>
++          }
++          <div style={{ flex: 1 }}>
++            <div style={{ fontSize: 13 }}>{p.name}</div>
++            <div style={{ fontSize: 10, color: C.muted }}>{p.cat}</div>
++          </div>
++
++          {/* Toggle stock ilimitado */}
++          <button onClick={() => toggleUnlimited(p)} title={p.unlimited_stock ? "Quitar stock ilimitado" : "Marcar como ilimitado"} style={{
++            padding: "3px 8px", borderRadius: 6, fontSize: 10, cursor: "pointer",
++            background: p.unlimited_stock ? C.neon2 + "22" : "transparent",
++            border: `1px solid ${p.unlimited_stock ? C.neon2 : C.border}`,
++            color: p.unlimited_stock ? C.neon2 : C.muted,
++            display: "flex", alignItems: "center", gap: 4,
++          }}>
++            <Icon name="infinity" size={12} /> {p.unlimited_stock ? "Ilimitado" : "Ilimitado"}
++          </button>
++
++          {p.unlimited_stock ? (
++            <Badge color={C.neon2}>Sin limite</Badge>
++          ) : editing === p.id ? (
+             <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+               <input type="number" value={val} onChange={e => setVal(e.target.value)} autoFocus
+                 style={{ width: 60, background: C.bg4, border: `1px solid ${C.neon}`, borderRadius: 6, color: C.text, padding: "3px 6px", fontSize: 12 }} />
+-              <Btn size="sm" variant="primary" onClick={() => setStock(p.id)}>✓</Btn>
+-              <Btn size="sm" variant="ghost" onClick={() => setEditing(null)}>✕</Btn>
++              <Btn size="sm" variant="primary" onClick={() => setStock(p.id)}><Icon name="check" size={12} /></Btn>
++              <Btn size="sm" variant="ghost" onClick={() => setEditing(null)}><Icon name="close" size={12} /></Btn>
+             </div>
+           ) : (
+             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+               <Badge color={p.stock === 0 ? C.red : p.stock < 5 ? C.amber : C.muted}>{p.stock}</Badge>
+-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, -1)}>−</Btn>
+-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, +1)}>+</Btn>
+-              <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}>✏️</Btn>
++              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, -1)}><Icon name="minus" size={12} /></Btn>
++              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, +1)}><Icon name="plus" size={12} /></Btn>
++              <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}><Icon name="edit" size={12} /></Btn>
+             </div>
+           )}
+         </div>
+       ))}
++      {!filtered.length && <div style={{ textAlign: "center", color: C.muted, padding: "30px 0", fontSize: 12 }}>Sin resultados</div>}
+     </div>
+   );
+ }
+@@ -601,7 +645,7 @@ function UsersTab({ businessId }) {
+               <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
+             </div>
+             <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
+-            <Btn size="sm" variant="ghost" onClick={() => remove(u)}>🗑</Btn>
++            <Btn size="sm" variant="ghost" onClick={() => remove(u)}><Icon name="trash" size={13} color={C.red} /></Btn>
+           </div>
+         </Card>
+       ))}
+diff --git a/frontend/src/components/BarmanView.jsx b/frontend/src/components/BarmanView.jsx
+index baf204b..80f073d 100644
+--- a/frontend/src/components/BarmanView.jsx
++++ b/frontend/src/components/BarmanView.jsx
+@@ -1,7 +1,7 @@
+ import { useState } from "react";
+ import { C, fmt, today } from "../styles.js";
+ import { api } from "../api.js";
+-import { Btn, Badge, Modal } from "./Common.jsx";
++import { Btn, Badge, Modal, Icon, SearchInput } from "./Common.jsx";
+ 
+ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+ 
+@@ -9,16 +9,22 @@ const STATUS_FLOW = ["pendiente", "preparando", "listo"];
+ const STATUS_LABEL = { pendiente: "Pendiente", preparando: "Preparando", listo: "Listo" };
+ const STATUS_COLOR = { pendiente: C.red, preparando: C.amber, listo: C.neon };
+ const BARRAS = ["B1", "B2", "B3", "B4"];
++const PAY_METHODS = [
++  { id: "ef", label: "Efectivo", icon: "cash" },
++  { id: "ta", label: "Tarjeta", icon: "card" },
++  { id: "qr", label: "QR/Trans.", icon: "qr" },
++];
++
++function isBarra(mesa) {
++  return BARRAS.includes(String(mesa));
++}
+ 
+-// Aplana todas las órdenes activas en una lista de "tickets de producto"
+-// (un item = una fila), que es como un barman real trabaja: viendo qué
+-// falta preparar, no viendo "órdenes" completas como cajas cerradas.
+ function flattenItems(orders) {
+   const rows = [];
+   for (const order of orders) {
+     if (order.is_closed) continue;
+     order.items.forEach((item, idx) => {
+-      if (item.paid) return; // ya cobrado y servido, no debe seguir en cola
++      if (item.paid) return;
+       rows.push({ orderId: order.id, mesa: order.mesa, note: order.note, itemIndex: idx, item });
+     });
+   }
+@@ -26,18 +32,21 @@ function flattenItems(orders) {
+ }
+ 
+ export default function BarmanView({ user, products, orders, onOrdersChanged, onProductsChanged, onLogout }) {
+-  const [filter, setFilter] = useState("todas"); // todas | pendiente | preparando | listo
++  const [filter, setFilter] = useState("todas");
+   const [barraModal, setBarraModal] = useState(false);
++  const [payModal, setPayModal] = useState(null);
+ 
+   const rows = flattenItems(orders);
+   const filtered = filter === "todas" ? rows : rows.filter(r => r.item.status === filter);
+-
+   const counts = {
+     pendiente: rows.filter(r => r.item.status === "pendiente").length,
+     preparando: rows.filter(r => r.item.status === "preparando").length,
+     listo: rows.filter(r => r.item.status === "listo").length,
+   };
+ 
++  // Cuentas de barra activas que el barman puede cobrar
++  const barraOrders = orders.filter(o => !o.is_closed && isBarra(o.mesa));
++
+   const advance = async (row) => {
+     const idx = STATUS_FLOW.indexOf(row.item.status);
+     const next = STATUS_FLOW[idx + 1];
+@@ -45,9 +54,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+     try {
+       await api.updateItemStatus(row.orderId, row.itemIndex, next);
+       onOrdersChanged();
+-    } catch (e) {
+-      alert("Error: " + e.message);
+-    }
++    } catch (e) { alert("Error: " + e.message); }
+   };
+ 
+   return (
+@@ -55,19 +62,40 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+ 
+       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+-          <span style={{ fontSize: 20 }}>🍹</span>
++          <Icon name="drink" size={20} color={C.neon2} />
+           <div>
+             <div style={{ fontWeight: 600, color: C.neon2, fontSize: 13 }}>{user.name?.toUpperCase() || "BARMAN"}</div>
+             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
+           </div>
+         </div>
+         <div style={{ display: "flex", gap: 8 }}>
+-          <Btn size="sm" variant="purple" onClick={() => setBarraModal(true)}>+ Consumo en barra</Btn>
++          <Btn size="sm" variant="purple" onClick={() => setBarraModal(true)}>
++            <Icon name="plus" size={13} /> Consumo en barra
++          </Btn>
++          {barraOrders.length > 0 && (
++            <Btn size="sm" variant="amber" onClick={() => setPayModal(barraOrders[0])}>
++              <Icon name="cash" size={13} /> Cobrar barra
++            </Btn>
++          )}
+           <Btn size="sm" variant="ghost" onClick={onLogout}>Salir</Btn>
+         </div>
+       </div>
+ 
+-      {/* Filtros por estado */}
++      {/* Si hay varias cuentas de barra abiertas, mostrarlas como tabs */}
++      {barraOrders.length > 1 && (
++        <div style={{ display: "flex", gap: 6, padding: "6px 12px", background: C.bg3, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
++          {barraOrders.map(o => (
++            <button key={o.id} onClick={() => setPayModal(o)} style={{
++              padding: "4px 12px", borderRadius: 16, fontSize: 11,
++              background: C.amber + "22", border: `1px solid ${C.amber}`, color: C.amber, cursor: "pointer",
++            }}>
++              {o.mesa} — {fmt(o.total)}
++            </button>
++          ))}
++        </div>
++      )}
++
++      {/* Filtros */}
+       <div style={{ display: "flex", gap: 6, padding: "8px 12px", background: C.bg3, borderBottom: `1px solid ${C.border}` }}>
+         {["todas", "pendiente", "preparando", "listo"].map(f => (
+           <button key={f} onClick={() => setFilter(f)} style={{
+@@ -82,18 +110,18 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+         ))}
+       </div>
+ 
+-      {/* Lista de productos por preparar, no de órdenes completas */}
++      {/* Lista de items */}
+       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
+         {!filtered.length && (
+           <div style={{ textAlign: "center", color: C.muted, marginTop: 60, fontSize: 13 }}>
+-            🎉 Sin productos pendientes
++            <Icon name="check" size={32} color={C.neon} />
++            <div style={{ marginTop: 8 }}>Sin productos pendientes</div>
+           </div>
+         )}
+         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+-          {filtered.map((row, i) => (
++          {filtered.map((row) => (
+             <div key={`${row.orderId}-${row.itemIndex}`} style={{
+-              background: C.bg2, border: `1px solid ${STATUS_COLOR[row.item.status]}55`,
+-              borderRadius: 12, padding: "12px 14px",
++              background: C.bg2, border: `1px solid ${STATUS_COLOR[row.item.status]}55`, borderRadius: 12, padding: "12px 14px",
+             }}>
+               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                 <Badge color={isBarra(row.mesa) ? C.neon2 : C.blue}>
+@@ -103,12 +131,12 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+               </div>
+ 
+               <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+-                {row.item.image_url ? (
+-                  <img src={`${API_URL}${row.item.image_url}`} alt={row.item.name}
+-                    style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />
+-                ) : (
+-                  <span style={{ fontSize: 26 }}>{row.item.emoji}</span>
+-                )}
++                {row.item.image_url
++                  ? <img src={`${API_URL}${row.item.image_url}`} alt={row.item.name} style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />
++                  : <div style={{ width: 40, height: 40, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center" }}>
++                      <Icon name="drink" size={20} color={C.muted} />
++                    </div>
++                }
+                 <div>
+                   <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item.qty}× {row.item.name}</div>
+                   <div style={{ fontSize: 11, color: C.muted }}>{fmt(row.item.price * row.item.qty)}</div>
+@@ -116,25 +144,19 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+               </div>
+ 
+               {row.note && (
+-                <div style={{ background: C.amber + "15", border: `1px solid ${C.amber}44`, borderRadius: 6, padding: "5px 8px", fontSize: 11, color: C.amber, marginBottom: 8 }}>
+-                  ⚠ {row.note}
++                <div style={{ background: C.amber + "15", border: `1px solid ${C.amber}44`, borderRadius: 6, padding: "5px 8px", fontSize: 11, color: C.amber, marginBottom: 8, display: "flex", gap: 6 }}>
++                  <Icon name="warning" size={12} color={C.amber} /> {row.note}
+                 </div>
+               )}
+ 
+-              {row.item.status !== "listo" ? (
+-                <Btn
+-                  variant={row.item.status === "pendiente" ? "amber" : "primary"}
+-                  onClick={() => advance(row)}
+-                  style={{ width: "100%" }}
+-                  size="sm"
+-                >
+-                  {row.item.status === "pendiente" ? "Empezar a preparar" : "Marcar listo"}
+-                </Btn>
+-              ) : (
+-                <div style={{ textAlign: "center", fontSize: 11, color: C.neon }}>
+-                  ✓ Listo para servir — pendiente de cobro
+-                </div>
+-              )}
++              {row.item.status !== "listo"
++                ? <Btn variant={row.item.status === "pendiente" ? "amber" : "primary"} onClick={() => advance(row)} style={{ width: "100%" }} size="sm">
++                    {row.item.status === "pendiente" ? "Empezar a preparar" : "Marcar listo"}
++                  </Btn>
++                : <div style={{ textAlign: "center", fontSize: 11, color: C.neon, display: "flex", gap: 4, justifyContent: "center", alignItems: "center" }}>
++                    <Icon name="check" size={12} color={C.neon} /> Listo — pendiente de cobro
++                  </div>
++              }
+             </div>
+           ))}
+         </div>
+@@ -143,45 +165,54 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
+       {barraModal && (
+         <BarraOrderModal
+           products={products}
++          orders={orders}
+           onClose={() => setBarraModal(false)}
+           onSent={() => { setBarraModal(false); onOrdersChanged(); }}
+         />
+       )}
++
++      {payModal && (
++        <PayModal
++          order={payModal}
++          allBarraOrders={barraOrders}
++          onSelectOrder={setPayModal}
++          onClose={() => setPayModal(null)}
++          onPaid={() => { setPayModal(null); onOrdersChanged(); }}
++        />
++      )}
+     </div>
+   );
+ }
+ 
+-function isBarra(mesa) {
+-  return BARRAS.includes(String(mesa));
+-}
+-
+-// El barman registra consumo de alguien sentado directamente en la barra,
+-// usando exactamente el mismo flujo que un mesero: elige "mesa" de barra,
+-// agrega productos, envía. Esa cuenta luego se cobra igual que cualquier
+-// otra (desde el propio panel del barman, ya que él la atendió).
+-function BarraOrderModal({ products, onClose, onSent }) {
++// Modal de consumo en barra: categorías + búsqueda, igual que el mesero
++function BarraOrderModal({ products, orders, onClose, onSent }) {
+   const [barra, setBarra] = useState(BARRAS[0]);
+   const [cart, setCart] = useState({});
++  const [search, setSearch] = useState("");
++  const cats = [...new Set(products.map(p => p.cat))];
++  const [cat, setCat] = useState(cats[0] || "");
+   const [sending, setSending] = useState(false);
+   const [error, setError] = useState("");
+ 
++  const barraOrder = orders.find(o => o.mesa === barra && !o.is_closed);
+   const cartItems = Object.values(cart);
+   const total = cartItems.reduce((s, x) => s + x.price * x.qty, 0);
+ 
++  const filtered = products.filter(p => {
++    const matchCat = !search && p.cat === cat;
++    const matchSearch = search && p.name.toLowerCase().includes(search.toLowerCase());
++    return matchCat || matchSearch;
++  });
++
+   const addItem = (p) => {
+     if (p.stock === 0 && !p.unlimited_stock) return;
+-    setCart(c => ({
+-      ...c,
+-      [p.id]: c[p.id] ? { ...c[p.id], qty: c[p.id].qty + 1 } : { ...p, qty: 1 },
+-    }));
++    setCart(c => ({ ...c, [p.id]: c[p.id] ? { ...c[p.id], qty: c[p.id].qty + 1 } : { ...p, qty: 1 } }));
+   };
+-
+   const removeItem = (id) => {
+     setCart(c => {
+-      const item = c[id];
+-      if (!item) return c;
+-      if (item.qty <= 1) { const n = { ...c }; delete n[id]; return n; }
+-      return { ...c, [id]: { ...item, qty: item.qty - 1 } };
++      if (!c[id]) return c;
++      if (c[id].qty <= 1) { const n = { ...c }; delete n[id]; return n; }
++      return { ...c, [id]: { ...c[id], qty: c[id].qty - 1 } };
+     });
+   };
+ 
+@@ -191,67 +222,105 @@ function BarraOrderModal({ products, onClose, onSent }) {
+     try {
+       await api.createOrder({ mesa: barra, items: cartItems, note: "" });
+       onSent();
+-    } catch (e) {
+-      setError(e.message);
+-    } finally {
+-      setSending(false);
+-    }
++    } catch (e) { setError(e.message); } finally { setSending(false); }
+   };
+ 
+   return (
+-    <Modal title="Consumo en barra" onClose={onClose}>
+-      {error && (
+-        <div style={{ background: C.red + "22", border: `1px solid ${C.red}`, color: C.red, borderRadius: 8, padding: "8px 12px", fontSize: 12, marginBottom: 10 }}>
+-          {error}
++    <Modal title={`Consumo en barra — ${barra}`} onClose={onClose}>
++      {/* Selector de banco de barra */}
++      <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
++        {BARRAS.map(b => {
++          const hasOrder = orders.some(o => o.mesa === b && !o.is_closed);
++          return (
++            <button key={b} onClick={() => setBarra(b)} style={{
++              flex: 1, padding: "7px 0", borderRadius: 8, fontSize: 12,
++              background: barra === b ? C.neon2 + "22" : "transparent",
++              border: `1px solid ${barra === b ? C.neon2 : hasOrder ? C.amber : C.border}`,
++              color: barra === b ? C.neon2 : hasOrder ? C.amber : C.muted, cursor: "pointer",
++            }}>{b}{hasOrder ? " •" : ""}</button>
++          );
++        })}
++      </div>
++
++      {barraOrder && (
++        <div style={{ background: C.amber + "15", border: `1px solid ${C.amber}44`, borderRadius: 8, padding: "6px 10px", fontSize: 11, color: C.amber, marginBottom: 8 }}>
++          Este banco ya tiene cuenta activa de {fmt(barraOrder.total)}. Lo que agregues se suma.
+         </div>
+       )}
+ 
+-      <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+-        {BARRAS.map(b => (
+-          <button key={b} onClick={() => setBarra(b)} style={{
+-            flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 12,
+-            background: barra === b ? C.neon2 + "22" : "transparent",
+-            border: `1px solid ${barra === b ? C.neon2 : C.border}`,
+-            color: barra === b ? C.neon2 : C.muted, cursor: "pointer",
+-          }}>{b}</button>
+-        ))}
+-      </div>
++      {/* Búsqueda */}
++      <SearchInput value={search} onChange={e => { setSearch(e.target.value); }} placeholder="Buscar producto..." />
+ 
+-      <div style={{ maxHeight: 240, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginBottom: 12 }}>
+-        {products.map(p => {
++      {/* Categorías (solo cuando no hay búsqueda activa) */}
++      {!search && (
++        <div style={{ display: "flex", gap: 6, overflowX: "auto", marginBottom: 8, paddingBottom: 2 }}>
++          {cats.map(c => (
++            <button key={c} onClick={() => setCat(c)} style={{
++              padding: "4px 12px", borderRadius: 16, whiteSpace: "nowrap", fontSize: 11,
++              background: cat === c ? C.neon2 + "22" : "transparent",
++              border: `1px solid ${cat === c ? C.neon2 : C.border}`,
++              color: cat === c ? C.neon2 : C.muted, cursor: "pointer",
++            }}>{c}</button>
++          ))}
++        </div>
++      )}
++
++      {/* Grilla de productos */}
++      <div style={{ maxHeight: 220, overflowY: "auto", display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))", gap: 8, marginBottom: 10 }}>
++        {filtered.map(p => {
+           const agotado = p.stock === 0 && !p.unlimited_stock;
++          const inCart = cart[p.id];
+           return (
+             <div key={p.id} onClick={() => addItem(p)} style={{
+-              background: C.bg3, border: `1px solid ${C.border}`, borderRadius: 8,
+-              padding: "8px 6px", textAlign: "center", cursor: agotado ? "not-allowed" : "pointer",
+-              opacity: agotado ? 0.4 : 1,
++              background: C.bg3, border: `1px solid ${inCart ? C.neon : agotado ? C.red + "44" : C.border}`,
++              borderRadius: 8, overflow: "hidden", cursor: agotado ? "not-allowed" : "pointer", opacity: agotado ? 0.4 : 1, position: "relative",
+             }}>
+-              <div style={{ fontSize: 20 }}>{p.emoji}</div>
+-              <div style={{ fontSize: 10, marginTop: 2 }}>{p.name}</div>
+-              <div style={{ fontSize: 11, color: C.neon }}>{fmt(p.price)}</div>
+-              {cart[p.id] && <div style={{ fontSize: 10, color: C.amber }}>×{cart[p.id].qty}</div>}
++              {p.image_url
++                ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: "100%", height: 60, objectFit: "cover", display: "block" }} />
++                : <div style={{ height: 50, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg4 }}>
++                    <Icon name="drink" size={22} color={C.muted} />
++                  </div>
++              }
++              {inCart && (
++                <div style={{ position: "absolute", top: 4, right: 4, background: C.neon, color: "#000", borderRadius: "50%", width: 18, height: 18, fontSize: 10, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
++                  {inCart.qty}
++                </div>
++              )}
++              <div style={{ padding: "5px 6px" }}>
++                <div style={{ fontSize: 10, lineHeight: 1.3, marginBottom: 2 }}>{p.name}</div>
++                <div style={{ fontSize: 11, color: C.neon, fontWeight: 600 }}>{fmt(p.price)}</div>
++              </div>
+             </div>
+           );
+         })}
+       </div>
+ 
++      {/* Carrito compacto */}
+       {cartItems.length > 0 && (
+-        <div style={{ marginBottom: 10 }}>
++        <div style={{ background: C.bg3, borderRadius: 8, padding: "8px 10px", marginBottom: 10 }}>
+           {cartItems.map(item => (
+-            <div key={item.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
+-              <span>{item.qty}× {item.name}</span>
++            <div key={item.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "2px 0" }}>
++              <span>{item.name}</span>
+               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+-                <button onClick={() => removeItem(item.id)} style={{ width: 18, height: 18, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 12, cursor: "pointer" }}>−</button>
+-                <span>{fmt(item.price * item.qty)}</span>
++                <button onClick={() => removeItem(item.id)} style={{ width: 18, height: 18, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 12, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
++                  <Icon name="minus" size={10} />
++                </button>
++                <span style={{ minWidth: 14, textAlign: "center" }}>{item.qty}</span>
++                <button onClick={() => addItem(item)} style={{ width: 18, height: 18, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 12, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
++                  <Icon name="plus" size={10} />
++                </button>
++                <span style={{ color: C.neon, minWidth: 44, textAlign: "right" }}>{fmt(item.price * item.qty)}</span>
+               </div>
+             </div>
+           ))}
+-          <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginTop: 6, fontSize: 13 }}>
++          <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}`, fontSize: 13 }}>
+             <span>Total</span><span style={{ color: C.neon }}>{fmt(total)}</span>
+           </div>
+         </div>
+       )}
+ 
++      {error && <div style={{ color: C.red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
++
+       <div style={{ display: "flex", gap: 8 }}>
+         <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
+         <Btn variant="primary" onClick={send} disabled={sending || !cartItems.length} style={{ flex: 1 }}>
+@@ -261,3 +330,119 @@ function BarraOrderModal({ products, onClose, onSent }) {
+     </Modal>
+   );
+ }
++
++// Modal de cobro para el barman, igual que el del mesero/admin pero con
++// calculadora de cambio para efectivo
++function PayModal({ order, allBarraOrders, onSelectOrder, onClose, onPaid }) {
++  const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
++  const [selected, setSelected] = useState(new Set(pendingIdx));
++  const [pay, setPay] = useState("ef");
++  const [cash, setCash] = useState("");
++  const [saving, setSaving] = useState(false);
++  const [error, setError] = useState("");
++
++  const toggle = (idx) => setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
++  const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
++  const cashNum = parseFloat(cash) || 0;
++  const change = cashNum > 0 ? cashNum - selectedTotal : null;
++
++  const confirmPay = async () => {
++    if (!selected.size) { setError("Selecciona al menos un producto"); return; }
++    if (pay === "ef" && cashNum > 0 && cashNum < selectedTotal) { setError("El monto en efectivo no alcanza"); return; }
++    setSaving(true); setError("");
++    try {
++      await api.payOrderItems(order.id, pay, [...selected]);
++      onPaid();
++    } catch (e) { setError(e.message); } finally { setSaving(false); }
++  };
++
++  return (
++    <Modal title={`Cobrar barra ${order.mesa}`} onClose={onClose}>
++      {/* Tabs si hay varias cuentas de barra */}
++      {allBarraOrders.length > 1 && (
++        <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
++          {allBarraOrders.map(o => (
++            <button key={o.id} onClick={() => onSelectOrder(o)} style={{
++              flex: 1, padding: "5px", borderRadius: 8, fontSize: 11,
++              background: o.id === order.id ? C.neon2 + "22" : "transparent",
++              border: `1px solid ${o.id === order.id ? C.neon2 : C.border}`,
++              color: o.id === order.id ? C.neon2 : C.muted, cursor: "pointer",
++            }}>{o.mesa}</button>
++          ))}
++        </div>
++      )}
++
++      {error && <div style={{ color: C.red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
++
++      <div style={{ maxHeight: 180, overflowY: "auto", marginBottom: 10 }}>
++        {order.items.map((item, idx) => (
++          <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
++            <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
++            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}× {item.name}{item.paid && <span style={{ color: C.neon, fontSize: 10 }}> (pagado)</span>}</span>
++            <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
++          </label>
++        ))}
++      </div>
++
++      {/* Métodos de pago */}
++      <div style={{ display: "flex", gap: 6, marginBottom: pay === "ef" ? 8 : 12 }}>
++        {PAY_METHODS.map(m => (
++          <button key={m.id} onClick={() => setPay(m.id)} style={{
++            flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11,
++            background: pay === m.id ? C.neon2 + "22" : "transparent",
++            border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
++            color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
++            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
++          }}>
++            <Icon name={m.icon} size={16} color={pay === m.id ? C.neon2 : C.muted} />
++            {m.label}
++          </button>
++        ))}
++      </div>
++
++      {/* Calculadora de cambio — solo en efectivo */}
++      {pay === "ef" && (
++        <div style={{ background: C.bg3, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
++          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Monto recibido en efectivo</div>
++          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
++            {[50, 100, 200, 500, 1000].map(d => (
++              <button key={d} onClick={() => setCash(String(d))} style={{
++                padding: "4px 10px", borderRadius: 8, fontSize: 12,
++                background: cash === String(d) ? C.neon + "22" : C.bg4,
++                border: `1px solid ${cash === String(d) ? C.neon : C.border}`,
++                color: cash === String(d) ? C.neon : C.muted, cursor: "pointer",
++              }}>${d}</button>
++            ))}
++          </div>
++          <input
++            type="number" min="0" value={cash}
++            onChange={e => setCash(e.target.value)}
++            placeholder="Otro monto..."
++            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border2}`, borderRadius: 8, color: C.text, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" }}
++          />
++          {change !== null && change >= 0 && (
++            <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
++              <span style={{ fontSize: 12, color: C.muted }}>Cambio</span>
++              <span style={{ fontSize: 18, fontWeight: 700, color: C.neon }}>{fmt(change)}</span>
++            </div>
++          )}
++          {change !== null && change < 0 && (
++            <div style={{ marginTop: 8, fontSize: 12, color: C.red }}>Falta {fmt(Math.abs(change))} para completar el pago</div>
++          )}
++        </div>
++      )}
++
++      <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 600, marginBottom: 14 }}>
++        <span>Total a cobrar</span>
++        <span style={{ color: C.neon, fontSize: 16 }}>{fmt(selectedTotal)}</span>
++      </div>
++
++      <div style={{ display: "flex", gap: 8 }}>
++        <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
++        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>
++          {saving ? "Cobrando..." : "Confirmar pago"}
++        </Btn>
++      </div>
++    </Modal>
++  );
++}
+diff --git a/frontend/src/components/Common.jsx b/frontend/src/components/Common.jsx
+index bb776b4..3059bb8 100644
+--- a/frontend/src/components/Common.jsx
++++ b/frontend/src/components/Common.jsx
+@@ -1,5 +1,39 @@
+ import { C } from "../styles.js";
+ 
++// Iconos SVG inline minimalistas (sin librerías externas, sin emojis de
++// plataforma) usados en todo el sistema para verse consistente y
++// profesional. stroke="currentColor" para que tomen el color del texto
++// que los envuelve.
++const ICONS = {
++  drink: <path d="M5 3h14l-2 8.5a5 5 0 0 1-10 0L5 3Zm5 8.5V20m-3 0h6M3 3h18" />,
++  dashboard: <path d="M3 12h6V3H3v9Zm0 9h6v-6H3v6Zm12 0h6V12h-6v9Zm0-18v6h6V3h-6Z" />,
++  table: <path d="M3 9h18M3 9v11M21 9v11M7 9V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v4" />,
++  tag: <path d="M20 10 12 2 2 12l8 8 10-10Zm-6-4 4 4M7 17l4-4" />,
++  box: <path d="M21 8 12 3 3 8m18 0-9 5-9-5m18 0v8l-9 5-9-5V8" />,
++  users: <path d="M16 11a4 4 0 1 0-4-4M6 21v-2a4 4 0 0 1 4-4h0M16 21v-2a4 4 0 0 0-3-3.87M2 21v-2a4 4 0 0 1 4-4" />,
++  check: <path d="M20 6 9 17l-5-5" />,
++  close: <path d="M18 6 6 18M6 6l12 12" />,
++  warning: <path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a1 1 0 0 0 .9 1.5h18.6a1 1 0 0 0 .9-1.5L13.7 3.9a1 1 0 0 0-1.7 0Z" />,
++  card: <path d="M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7Zm0 4h20" />,
++  cash: <path d="M3 7h18v10H3V7Zm9 2.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5ZM5 7v0M19 17v0" />,
++  qr: <path d="M3 3h7v7H3V3Zm11 0h7v7h-7V3ZM3 14h7v7H3v-7Zm14 0h1v1m-1 3h1v3m3-7h1v7h-4v-4" />,
++  note: <path d="M14 3v5h5M6 3h8l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />,
++  edit: <path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5Z" />,
++  trash: <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m2 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16Z" />,
++  search: <path d="m21 21-4.3-4.3M19 11a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" />,
++  plus: <path d="M12 5v14M5 12h14" />,
++  minus: <path d="M5 12h14" />,
++  camera: <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2v11ZM12 17a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />,
++  receipt: <path d="M4 2h16v20l-3-2-3 2-3-2-3 2-3-2-1 2V2Zm3 5h10m-10 4h10m-10 4h6" />,
++  infinity: <path d="M18.2 8.2a4 4 0 1 0 0 7.6 4 4 0 0 0 1.8-7.6M5.8 8.2a4 4 0 1 0 0 7.6 4 4 0 0 0-1.8-7.6M12 12l1.4-1.4M12 12l-1.4 1.4" />,
++};
++
++export const Icon = ({ name, size = 16, color = "currentColor", strokeWidth = 2 }) => (
++  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
++    {ICONS[name] || ICONS.drink}
++  </svg>
++);
++
+ export const Btn = ({ children, onClick, variant = "default", size = "md", disabled, style = {} }) => {
+   const base = {
+     border: "none", borderRadius: 8, fontWeight: 500, cursor: disabled ? "not-allowed" : "pointer",
+@@ -43,7 +77,7 @@ export const Modal = ({ children, onClose, title }) => (
+       {title && (
+         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+           <span style={{ fontSize: 16, fontWeight: 600, color: C.neon }}>{title}</span>
+-          <Btn size="sm" variant="ghost" onClick={onClose}>✕</Btn>
++          <Btn size="sm" variant="ghost" onClick={onClose}><Icon name="close" size={14} /></Btn>
+         </div>
+       )}
+       {children}
+@@ -64,4 +98,24 @@ export const ErrorBanner = ({ message }) => !message ? null : (
+   <div style={{ background: C.red + "22", border: `1px solid ${C.red}`, color: C.red, borderRadius: 8, padding: "8px 12px", fontSize: 12, marginBottom: 10 }}>
+     {message}
+   </div>
++);
++
++// Buscador reutilizable: se usa en menú de mesero, modal de barra, menú e
++// inventario del admin — cualquier lista de productos que pueda crecer
++// mucho se vuelve manejable con esto en vez de solo categorías.
++export const SearchInput = ({ value, onChange, placeholder = "Buscar..." }) => (
++  <div style={{ position: "relative", marginBottom: 10 }}>
++    <div style={{ position: "absolute", left: 10, top: "50%", transform: "translateY(-50%)", color: C.muted, pointerEvents: "none" }}>
++      <Icon name="search" size={14} />
++    </div>
++    <input
++      value={value}
++      onChange={onChange}
++      placeholder={placeholder}
++      style={{
++        width: "100%", background: C.bg3, border: `1px solid ${C.border2}`, borderRadius: 8,
++        color: C.text, padding: "8px 10px 8px 32px", fontSize: 13, outline: "none", boxSizing: "border-box",
++      }}
++    />
++  </div>
+ );
+\ No newline at end of file
+diff --git a/frontend/src/components/MeseroView.jsx b/frontend/src/components/MeseroView.jsx
+index 4f47a2d..1b0fe9a 100644
+--- a/frontend/src/components/MeseroView.jsx
++++ b/frontend/src/components/MeseroView.jsx
+@@ -1,61 +1,57 @@
+ import { useState } from "react";
+ import { C, fmt, today } from "../styles.js";
+ import { api } from "../api.js";
+-import { Btn, Badge, Divider, Modal } from "./Common.jsx";
++import { Btn, Badge, Divider, Modal, Icon, SearchInput } from "./Common.jsx";
+ 
+ const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+ 
+-const CATS_FALLBACK = ["Cervezas", "Licores", "Cócteles", "Botanas"];
+-const MESAS = Array.from({ length: 10 }, (_, i) => i + 1);
+ const PAY_METHODS = [
+-  { id: "ef", label: "Efectivo" },
+-  { id: "ta", label: "Tarjeta" },
+-  { id: "qr", label: "QR/Trans." },
++  { id: "ef", label: "Efectivo", icon: "cash" },
++  { id: "ta", label: "Tarjeta", icon: "card" },
++  { id: "qr", label: "QR/Trans.", icon: "qr" },
+ ];
+ 
+ export default function MeseroView({ user, products, promos, orders, onOrdersChanged, onLogout }) {
++  const cats = [...new Set(products.map(p => p.cat))];
+   const [mesa, setMesa] = useState(1);
+-  const cats = [...new Set(products.map(p => p.cat))].length
+-    ? [...new Set(products.map(p => p.cat))]
+-    : CATS_FALLBACK;
+-  const [cat, setCat] = useState(cats[0]);
++  const [cat, setCat] = useState(cats[0] || "");
++  const [search, setSearch] = useState("");
+   const [cart, setCart] = useState({});
+   const [note, setNote] = useState("");
+   const [disc, setDisc] = useState(0);
+   const [split, setSplit] = useState(1);
++  const [activePromo, setActivePromo] = useState(null);
+   const [sending, setSending] = useState(false);
+   const [sent, setSent] = useState(false);
+-  const [activePromo, setActivePromo] = useState(null);
+   const [closeModal, setCloseModal] = useState(false);
++  const [mesaCount, setMesaCount] = useState(10);
+ 
+   const activePromos = promos.filter(p => p.active);
+-  // La cuenta activa de la mesa: lo que ya se mandó a barra, sin importar
+-  // quién lo mandó ni cuántas rondas se hayan acumulado.
+   const mesaOrder = orders.find(o => String(o.mesa) === String(mesa) && !o.is_closed);
+   const cartItems = Object.values(cart);
+   const sub = cartItems.reduce((s, x) => s + x.price * x.qty, 0);
+   const promoDisc = activePromo
+-    ? activePromo.type === "2x1"
+-      ? sub * 0.5
+-      : sub * activePromo.discount / 100
++    ? activePromo.type === "2x1" ? sub * 0.5 : sub * activePromo.discount / 100
+     : 0;
+   const manualDisc = sub * disc / 100;
+   const total = Math.max(0, sub - promoDisc - manualDisc);
+ 
++  const MESAS = Array.from({ length: mesaCount }, (_, i) => i + 1);
++
++  const filteredProducts = products.filter(p => {
++    if (search) return p.name.toLowerCase().includes(search.toLowerCase());
++    return p.cat === cat;
++  });
++
+   const addItem = (p) => {
+-    if (p.stock === 0) return;
+-    setCart(c => ({
+-      ...c,
+-      [p.id]: c[p.id] ? { ...c[p.id], qty: c[p.id].qty + 1 } : { ...p, qty: 1 },
+-    }));
++    if (p.stock === 0 && !p.unlimited_stock) return;
++    setCart(c => ({ ...c, [p.id]: c[p.id] ? { ...c[p.id], qty: c[p.id].qty + 1 } : { ...p, qty: 1 } }));
+   };
+-
+   const removeItem = (id) => {
+     setCart(c => {
+-      const item = c[id];
+-      if (!item) return c;
+-      if (item.qty <= 1) { const n = { ...c }; delete n[id]; return n; }
+-      return { ...c, [id]: { ...item, qty: item.qty - 1 } };
++      if (!c[id]) return c;
++      if (c[id].qty <= 1) { const n = { ...c }; delete n[id]; return n; }
++      return { ...c, [id]: { ...c[id], qty: c[id].qty - 1 } };
+     });
+   };
+ 
+@@ -67,20 +63,17 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
+       setCart({}); setNote(""); setDisc(0); setSplit(1); setActivePromo(null);
+       setSent(true); setTimeout(() => setSent(false), 2000);
+       onOrdersChanged();
+-    } catch (e) {
+-      alert("Error al enviar la orden: " + e.message);
+-    } finally {
+-      setSending(false);
+-    }
++    } catch (e) { alert("Error al enviar: " + e.message); }
++    finally { setSending(false); }
+   };
+ 
+   return (
+     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg }}>
+ 
+-      {/* ── Header ── */}
++      {/* Header */}
+       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+-          <span style={{ fontSize: 20 }}>🧑‍🍳</span>
++          <Icon name="note" size={20} color={C.neon} />
+           <div>
+             <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>{user.name?.toUpperCase() || "MESERO"}</div>
+             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
+@@ -92,115 +85,94 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
+         </div>
+       </div>
+ 
+-      {/* ── Selector de mesas ── */}
+-      <div style={{ background: C.bg3, borderBottom: `1px solid ${C.border}`, padding: "8px 12px", overflowX: "auto" }}>
+-        <div style={{ display: "flex", gap: 6, minWidth: "max-content" }}>
++      {/* Selector de mesas + configurar cantidad */}
++      <div style={{ background: C.bg3, borderBottom: `1px solid ${C.border}`, padding: "8px 12px" }}>
++        <div style={{ display: "flex", gap: 6, overflowX: "auto", minWidth: 0, alignItems: "center" }}>
+           {MESAS.map(m => {
+             const hasOrder = orders.some(o => String(o.mesa) === String(m) && !o.is_closed);
+             return (
+               <button key={m} onClick={() => setMesa(m)} style={{
+-                padding: "4px 12px", borderRadius: 16,
++                padding: "4px 12px", borderRadius: 16, flexShrink: 0,
+                 background: mesa === m ? C.neon + "22" : C.bg4,
+                 border: `1px solid ${mesa === m ? C.neon : hasOrder ? C.amber : C.border}`,
+                 color: mesa === m ? C.neon : hasOrder ? C.amber : C.muted,
+                 fontSize: 12, cursor: "pointer",
+               }}>
+-                Mesa {m}{hasOrder ? " •" : ""}
++                {m}{hasOrder ? " •" : ""}
+               </button>
+             );
+           })}
++          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0, marginLeft: 6 }}>
++            <span style={{ fontSize: 10, color: C.muted }}>Mesas:</span>
++            <button onClick={() => setMesaCount(c => Math.max(1, c - 1))} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
++              <Icon name="minus" size={10} />
++            </button>
++            <span style={{ fontSize: 11, color: C.muted, minWidth: 16, textAlign: "center" }}>{mesaCount}</span>
++            <button onClick={() => setMesaCount(c => c + 1)} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
++              <Icon name="plus" size={10} />
++            </button>
++          </div>
+         </div>
+       </div>
+ 
+-      {/* ── Cuerpo principal ── */}
++      {/* Cuerpo */}
+       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+ 
+-        {/* ── Menú ── */}
++        {/* Menú */}
+         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+ 
+-          {/* Categorías + promos */}
+-          <div style={{ display: "flex", gap: 6, padding: "8px 12px", overflowX: "auto", background: C.bg2, borderBottom: `1px solid ${C.border}` }}>
+-            {cats.map(c => (
+-              <button key={c} onClick={() => setCat(c)} style={{
+-                padding: "4px 14px", borderRadius: 16, whiteSpace: "nowrap",
+-                background: cat === c ? C.neon2 + "22" : "transparent",
+-                border: `1px solid ${cat === c ? C.neon2 : C.border}`,
+-                color: cat === c ? C.neon2 : C.muted, fontSize: 12, cursor: "pointer",
+-              }}>{c}</button>
+-            ))}
+-            {activePromos.map(p => (
+-              <button key={p.id} onClick={() => setActivePromo(activePromo?.id === p.id ? null : p)} style={{
+-                padding: "4px 14px", borderRadius: 16, whiteSpace: "nowrap",
+-                background: activePromo?.id === p.id ? C.amber + "22" : "transparent",
+-                border: `1px solid ${activePromo?.id === p.id ? C.amber : C.border}`,
+-                color: activePromo?.id === p.id ? C.amber : C.muted, fontSize: 12, cursor: "pointer",
+-              }}>{p.emoji} {p.name}</button>
+-            ))}
++          {/* Búsqueda + Categorías + Promos */}
++          <div style={{ padding: "8px 12px", background: C.bg2, borderBottom: `1px solid ${C.border}` }}>
++            <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..." />
++            {!search && (
++              <div style={{ display: "flex", gap: 6, overflowX: "auto" }}>
++                {cats.map(c => (
++                  <button key={c} onClick={() => setCat(c)} style={{
++                    padding: "4px 14px", borderRadius: 16, whiteSpace: "nowrap",
++                    background: cat === c ? C.neon2 + "22" : "transparent",
++                    border: `1px solid ${cat === c ? C.neon2 : C.border}`,
++                    color: cat === c ? C.neon2 : C.muted, fontSize: 12, cursor: "pointer",
++                  }}>{c}</button>
++                ))}
++                {activePromos.map(p => (
++                  <button key={p.id} onClick={() => setActivePromo(activePromo?.id === p.id ? null : p)} style={{
++                    padding: "4px 14px", borderRadius: 16, whiteSpace: "nowrap",
++                    background: activePromo?.id === p.id ? C.amber + "22" : "transparent",
++                    border: `1px solid ${activePromo?.id === p.id ? C.amber : C.border}`,
++                    color: activePromo?.id === p.id ? C.amber : C.muted, fontSize: 12, cursor: "pointer",
++                  }}>{p.name}</button>
++                ))}
++              </div>
++            )}
+           </div>
+ 
+-          {/* Grilla de productos */}
+-          <div style={{
+-            flex: 1, overflowY: "auto", padding: 12,
+-            display: "grid",
+-            gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))",
+-            gap: 10, alignContent: "start",
+-          }}>
+-            {products.filter(p => p.cat === cat).map(p => {
++          {/* Grilla */}
++          <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 10, alignContent: "start" }}>
++            {filteredProducts.map(p => {
+               const inCart = cart[p.id];
+               const agotado = p.stock === 0 && !p.unlimited_stock;
+               return (
+-                <div
+-                  key={p.id}
+-                  onClick={() => addItem(p)}
+-                  style={{
+-                    background: C.bg3,
+-                    border: `1px solid ${agotado ? C.red + "44" : inCart ? C.neon + "66" : C.border}`,
+-                    borderRadius: 12, overflow: "hidden",
+-                    cursor: agotado ? "not-allowed" : "pointer",
+-                    opacity: agotado ? 0.5 : 1,
+-                    userSelect: "none",
+-                    transition: "border-color .15s",
+-                    position: "relative",
+-                  }}
+-                >
+-                  {/* Imagen o emoji */}
+-                  {p.image_url ? (
+-                    <img
+-                      src={`${API_URL}${p.image_url}`}
+-                      alt={p.name}
+-                      style={{ width: "100%", height: 90, objectFit: "cover", display: "block" }}
+-                    />
+-                  ) : (
+-                    <div style={{
+-                      height: 70, display: "flex", alignItems: "center",
+-                      justifyContent: "center", fontSize: 30, background: C.bg4,
+-                    }}>
+-                      {p.emoji}
+-                    </div>
+-                  )}
+-
+-                  {/* Badge cantidad en carrito */}
++                <div key={p.id} onClick={() => addItem(p)} style={{
++                  background: C.bg3, border: `1px solid ${agotado ? C.red + "44" : inCart ? C.neon + "66" : C.border}`,
++                  borderRadius: 12, overflow: "hidden", cursor: agotado ? "not-allowed" : "pointer",
++                  opacity: agotado ? 0.5 : 1, userSelect: "none", position: "relative",
++                }}>
++                  {p.image_url
++                    ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: "100%", height: 90, objectFit: "cover", display: "block" }} />
++                    : <div style={{ height: 70, display: "flex", alignItems: "center", justifyContent: "center", background: C.bg4 }}>
++                        <Icon name="drink" size={30} color={C.muted} />
++                      </div>
++                  }
+                   {inCart && (
+-                    <div style={{
+-                      position: "absolute", top: 6, right: 6,
+-                      background: C.neon, color: "#000",
+-                      borderRadius: "50%", width: 22, height: 22,
+-                      fontSize: 11, fontWeight: 700,
+-                      display: "flex", alignItems: "center", justifyContent: "center",
+-                    }}>
++                    <div style={{ position: "absolute", top: 6, right: 6, background: C.neon, color: "#000", borderRadius: "50%", width: 22, height: 22, fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                       {inCart.qty}
+                     </div>
+                   )}
+-
+                   <div style={{ padding: "7px 8px 10px" }}>
+                     <div style={{ fontSize: 11, fontWeight: 500, lineHeight: 1.3, marginBottom: 3 }}>{p.name}</div>
+                     <div style={{ fontSize: 13, color: C.neon, fontWeight: 600 }}>{fmt(p.price)}</div>
+-                    {!p.unlimited_stock && p.stock < 5 && p.stock > 0 && (
+-                      <div style={{ fontSize: 9, color: C.amber, marginTop: 2 }}>Últimas {p.stock}</div>
+-                    )}
+-                    {agotado && (
+-                      <div style={{ fontSize: 9, color: C.red, marginTop: 2 }}>Agotado</div>
+-                    )}
++                    {!p.unlimited_stock && p.stock > 0 && p.stock < 5 && <div style={{ fontSize: 9, color: C.amber, marginTop: 2 }}>Últimas {p.stock}</div>}
++                    {agotado && <div style={{ fontSize: 9, color: C.red, marginTop: 2 }}>Agotado</div>}
+                   </div>
+                 </div>
+               );
+@@ -208,83 +180,73 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
+           </div>
+         </div>
+ 
+-        {/* ── Panel de orden ── */}
++        {/* Panel de orden */}
+         <div style={{ width: 280, background: C.bg2, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+-            <span style={{ fontWeight: 500, fontSize: 13 }}>🧾 Nueva ronda — Mesa {mesa}</span>
++            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 500 }}>
++              <Icon name="receipt" size={14} color={C.neon} />
++              Mesa {mesa}
++            </div>
+             <Btn size="sm" variant="ghost" onClick={() => setCart({})}>Limpiar</Btn>
+           </div>
+ 
+           {mesaOrder && (
+-            <div style={{ background: C.amber + "15", borderBottom: `1px solid ${C.border}`, padding: "8px 12px", fontSize: 11, color: C.amber }}>
+-              Esta mesa ya tiene una cuenta activa de {fmt(mesaOrder.total)}. Lo que agregues aquí se suma a esa cuenta.
++            <div style={{ background: C.amber + "15", borderBottom: `1px solid ${C.border}`, padding: "7px 12px", fontSize: 11, color: C.amber }}>
++              Cuenta activa: {fmt(mesaOrder.total)} — lo nuevo se suma
+             </div>
+           )}
+ 
+-          {/* Items del carrito (lo que se va a ENVIAR, no la cuenta completa) */}
+           <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+-            {!cartItems.length && (
+-              <div style={{ textAlign: "center", color: C.muted, marginTop: 40, fontSize: 12, lineHeight: 2 }}>
+-                Sin productos<br /><span style={{ fontSize: 11 }}>Toca del menú</span>
+-              </div>
+-            )}
++            {!cartItems.length && <div style={{ textAlign: "center", color: C.muted, marginTop: 40, fontSize: 12 }}>Sin productos en la ronda</div>}
+             {cartItems.map(item => (
+               <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}` }}>
+-                {item.image_url ? (
+-                  <img
+-                    src={`${API_URL}${item.image_url}`}
+-                    alt={item.name}
+-                    style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
+-                  />
+-                ) : (
+-                  <span style={{ fontSize: 16, flexShrink: 0 }}>{item.emoji}</span>
+-                )}
+-                <div style={{ flex: 1, fontSize: 12, lineHeight: 1.3 }}>{item.name}</div>
++                {item.image_url
++                  ? <img src={`${API_URL}${item.image_url}`} alt={item.name} style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
++                  : <div style={{ width: 28, height: 28, borderRadius: 6, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
++                      <Icon name="drink" size={14} color={C.muted} />
++                    </div>
++                }
++                <div style={{ flex: 1, fontSize: 12 }}>{item.name}</div>
+                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+-                  <button onClick={(e) => { e.stopPropagation(); removeItem(item.id); }} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 14, cursor: "pointer", lineHeight: 1 }}>−</button>
++                  <button onClick={() => removeItem(item.id)} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
++                    <Icon name="minus" size={10} />
++                  </button>
+                   <span style={{ minWidth: 16, textAlign: "center", fontSize: 12 }}>{item.qty}</span>
+-                  <button onClick={(e) => { e.stopPropagation(); addItem(item); }} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 14, cursor: "pointer", lineHeight: 1 }}>+</button>
++                  <button onClick={() => addItem(item)} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>
++                    <Icon name="plus" size={10} />
++                  </button>
+                 </div>
+                 <div style={{ fontSize: 12, color: C.neon, minWidth: 50, textAlign: "right" }}>{fmt(item.price * item.qty)}</div>
+               </div>
+             ))}
+           </div>
+ 
+-          {/* Totales y envío */}
+           <div style={{ padding: "10px 12px", background: C.bg3, borderTop: `1px solid ${C.border}` }}>
+-            <div style={{ marginBottom: 8 }}>
+-              <input
+-                value={note}
+-                onChange={e => setNote(e.target.value)}
+-                placeholder="Nota (sin hielo, bien cocido...)"
+-                style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "5px 8px", fontSize: 11 }}
+-              />
+-            </div>
++            <input value={note} onChange={e => setNote(e.target.value)} placeholder="Nota (sin hielo, etc.)"
++              style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "5px 8px", fontSize: 11, marginBottom: 8, boxSizing: "border-box" }} />
++
+             <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+               <div style={{ flex: 1 }}>
+                 <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>Desc. %</div>
+                 <input type="number" min="0" max="100" value={disc} onChange={e => setDisc(+e.target.value)}
+-                  style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "4px 6px", fontSize: 12 }} />
++                  style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "4px 6px", fontSize: 12, boxSizing: "border-box" }} />
+               </div>
+               <div style={{ flex: 1 }}>
+                 <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>Dividir</div>
+                 <input type="number" min="1" value={split} onChange={e => setSplit(+e.target.value)}
+-                  style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "4px 6px", fontSize: 12 }} />
++                  style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "4px 6px", fontSize: 12, boxSizing: "border-box" }} />
+               </div>
+             </div>
+ 
+-            {activePromo && (
+-              <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>✓ {activePromo.name} aplicada</div>
+-            )}
++            {activePromo && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>Promo activa: {activePromo.name}</div>}
+ 
+             <Divider />
+-
+             <div style={{ fontSize: 12, color: C.muted, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+-              <span>Subtotal ronda</span><span>{fmt(sub)}</span>
++              <span>Subtotal</span><span>{fmt(sub)}</span>
+             </div>
+-            {(promoDisc > 0 || manualDisc > 0) && (
++            {(promoDisc + manualDisc) > 0 && (
+               <div style={{ fontSize: 12, color: C.amber, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
+-                <span>Descuento</span><span>−{fmt(promoDisc + manualDisc)}</span>
++                <span>Descuento</span><span>-{fmt(promoDisc + manualDisc)}</span>
+               </div>
+             )}
+             <div style={{ fontSize: 14, fontWeight: 600, display: "flex", justifyContent: "space-between", marginBottom: split > 1 ? 3 : 8 }}>
+@@ -292,25 +254,22 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
+             </div>
+             {split > 1 && (
+               <div style={{ fontSize: 12, color: C.neon2, display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+-                <span>Por persona ({split})</span><span>{fmt(total / split)}</span>
++                <span>x persona ({split})</span><span>{fmt(total / split)}</span>
+               </div>
+             )}
+ 
+-            {sent ? (
+-              <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: "9px", textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+-                ✓ Enviado a barra
+-              </div>
+-            ) : (
+-              <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
+-                {sending ? "Enviando..." : "Enviar a barra"}
+-              </Btn>
+-            )}
++            {sent
++              ? <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: 9, textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500, marginBottom: 8, display: "flex", gap: 6, justifyContent: "center", alignItems: "center" }}>
++                  <Icon name="check" size={14} color={C.neon} /> Enviado a barra
++                </div>
++              : <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
++                  {sending ? "Enviando..." : "Enviar a barra"}
++                </Btn>
++            }
+ 
+-            {/* El método de pago se decide hasta este momento — cuando la
+-                mesa pide la cuenta — no al mandar productos a barra. */}
+             {mesaOrder && (
+-              <Btn variant="amber" onClick={() => setCloseModal(true)} style={{ width: "100%", fontSize: 13 }}>
+-                💳 Cobrar cuenta de la mesa
++              <Btn variant="amber" onClick={() => setCloseModal(true)} style={{ width: "100%", fontSize: 13, display: "flex", gap: 6, justifyContent: "center" }}>
++                <Icon name="cash" size={14} color="#000" /> Cobrar cuenta
+               </Btn>
+             )}
+           </div>
+@@ -318,102 +277,104 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
+       </div>
+ 
+       {closeModal && mesaOrder && (
+-        <CloseAccountModal
+-          order={mesaOrder}
+-          onClose={() => setCloseModal(false)}
+-          onPaid={() => { setCloseModal(false); onOrdersChanged(); }}
+-        />
++        <CloseAccountModal order={mesaOrder} onClose={() => setCloseModal(false)} onPaid={() => { setCloseModal(false); onOrdersChanged(); }} />
+       )}
+     </div>
+   );
+ }
+ 
+-// Modal de cobro: el mesero elige qué items de la cuenta se están pagando
+-// (todos, o solo lo que consumió una persona) y con qué método. Permite
+-// pagos parciales: lo pagado se descuenta de lo pendiente de la mesa, y la
+-// cuenta sigue abierta hasta que todo esté pagado.
+ function CloseAccountModal({ order, onClose, onPaid }) {
+   const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
+-  const [selected, setSelected] = useState(new Set(pendingIdx)); // por default: todo
++  const [selected, setSelected] = useState(new Set(pendingIdx));
+   const [pay, setPay] = useState("ef");
++  const [cash, setCash] = useState("");
+   const [saving, setSaving] = useState(false);
+   const [error, setError] = useState("");
+ 
+-  const toggle = (idx) => {
+-    setSelected(s => {
+-      const n = new Set(s);
+-      n.has(idx) ? n.delete(idx) : n.add(idx);
+-      return n;
+-    });
+-  };
+-
++  const toggle = (idx) => setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
+   const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
++  const cashNum = parseFloat(cash) || 0;
++  const change = cashNum > 0 ? cashNum - selectedTotal : null;
+ 
+   const confirmPay = async () => {
+-    if (!selected.size) { setError("Selecciona al menos un producto a cobrar"); return; }
++    if (!selected.size) { setError("Selecciona al menos un producto"); return; }
++    if (pay === "ef" && cashNum > 0 && cashNum < selectedTotal) { setError("El monto no alcanza"); return; }
+     setSaving(true); setError("");
+     try {
+       await api.payOrderItems(order.id, pay, [...selected]);
+       onPaid();
+-    } catch (e) {
+-      setError(e.message);
+-    } finally {
+-      setSaving(false);
+-    }
++    } catch (e) { setError(e.message); } finally { setSaving(false); }
+   };
+ 
+   return (
+     <Modal title={`Cobrar Mesa ${order.mesa}`} onClose={onClose}>
+-      {error && (
+-        <div style={{ background: C.red + "22", border: `1px solid ${C.red}`, color: C.red, borderRadius: 8, padding: "8px 12px", fontSize: 12, marginBottom: 10 }}>
+-          {error}
+-        </div>
+-      )}
+-      <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
+-        Selecciona qué se va a pagar ahora. Si alguien se va antes, desmarca lo que no es suyo.
+-      </div>
+-      <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
++      {error && <div style={{ color: C.red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
++
++      <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>Selecciona qué se paga ahora. Puedes dejar lo que no corresponde.</div>
++
++      <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 10 }}>
+         {order.items.map((item, idx) => (
+-          <label key={idx} style={{
+-            display: "flex", alignItems: "center", gap: 8, padding: "6px 0",
+-            borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1,
+-            cursor: item.paid ? "default" : "pointer",
+-          }}>
+-            <input
+-              type="checkbox"
+-              checked={item.paid || selected.has(idx)}
+-              disabled={item.paid}
+-              onChange={() => toggle(idx)}
+-            />
+-            <span style={{ flex: 1, fontSize: 12 }}>
+-              {item.qty}× {item.name} {item.paid && <span style={{ color: C.neon, fontSize: 10 }}>(ya pagado)</span>}
+-            </span>
++          <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
++            <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
++            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}x {item.name}{item.paid && <span style={{ color: C.neon, fontSize: 10 }}> (ya pagado)</span>}</span>
+             <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
+           </label>
+         ))}
+       </div>
+ 
+-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
++      {/* Métodos de pago */}
++      <div style={{ display: "flex", gap: 6, marginBottom: pay === "ef" ? 8 : 12 }}>
+         {PAY_METHODS.map(m => (
+           <button key={m.id} onClick={() => setPay(m.id)} style={{
+-            flex: 1, padding: "6px 2px", borderRadius: 6, fontSize: 11,
++            flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11,
+             background: pay === m.id ? C.neon2 + "22" : "transparent",
+             border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
+             color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
+-          }}>{m.label}</button>
++            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
++          }}>
++            <Icon name={m.icon} size={16} color={pay === m.id ? C.neon2 : C.muted} />
++            {m.label}
++          </button>
+         ))}
+       </div>
+ 
++      {/* Calculadora de cambio */}
++      {pay === "ef" && (
++        <div style={{ background: C.bg3, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
++          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Monto recibido</div>
++          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
++            {[50, 100, 200, 500, 1000].map(d => (
++              <button key={d} onClick={() => setCash(String(d))} style={{
++                padding: "4px 10px", borderRadius: 8, fontSize: 12,
++                background: cash === String(d) ? C.neon + "22" : C.bg4,
++                border: `1px solid ${cash === String(d) ? C.neon : C.border}`,
++                color: cash === String(d) ? C.neon : C.muted, cursor: "pointer",
++              }}>${d}</button>
++            ))}
++          </div>
++          <input type="number" min="0" value={cash} onChange={e => setCash(e.target.value)} placeholder="Otro monto..."
++            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border2}`, borderRadius: 8, color: C.text, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" }} />
++          {change !== null && change >= 0 && (
++            <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
++              <span style={{ fontSize: 12, color: C.muted }}>Cambio</span>
++              <span style={{ fontSize: 20, fontWeight: 700, color: C.neon }}>{fmt(change)}</span>
++            </div>
++          )}
++          {change !== null && change < 0 && (
++            <div style={{ marginTop: 8, fontSize: 12, color: C.red }}>Faltan {fmt(Math.abs(change))}</div>
++          )}
++        </div>
++      )}
++
+       <Divider />
+       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
+-        <span>A cobrar ahora</span>
+-        <span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
++        <span>Total</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
+       </div>
+ 
+       <div style={{ display: "flex", gap: 8 }}>
+         <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
+         <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>
+-          {saving ? "Cobrando..." : "Confirmar pago"}
++          {saving ? "Cobrando..." : "Confirmar"}
+         </Btn>
+       </div>
+     </Modal>
+-- 
+2.43.0
+

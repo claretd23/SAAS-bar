@@ -30,6 +30,14 @@ export default function App() {
       setOrders(o);
     } catch (e) {
       console.error("Error cargando datos:", e);
+      // Si el token expiró o es inválido, el backend responde 401 ("Token
+      // inválido" / "Sin token"). En ese caso limpiamos la sesión para que
+      // la persona vuelva al login en vez de quedarse en una pantalla en
+      // blanco o con datos viejos sin poder hacer nada.
+      if (e.message?.includes("Token inválido") || e.message?.includes("Sin token")) {
+        clearSession();
+        setUser(null);
+      }
     } finally {
       setReady(true);
     }

@@ -1,21 +1,41 @@
 import { useState, useEffect } from "react";
 import { C, fmt, today } from "../styles.js";
 import { api } from "../api.js";
-import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.jsx";
+import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider, Icon, SearchInput } from "./Common.jsx";
+
+const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 const TABS = [
-  { id: "dashboard", label: "📊 Dashboard" },
-  { id: "orders", label: "🧾 Mesas" },
-  { id: "menu", label: "🍹 Menú" },
-  { id: "promos", label: "🏷️ Promos" },
-  { id: "inventory", label: "📦 Inventario" },
-  { id: "users", label: "👥 Usuarios" },
+  { id: "dashboard", label: "Dashboard",  icon: "dashboard" },
+  { id: "orders",    label: "Mesas",      icon: "table"     },
+  { id: "menu",      label: "Menú",       icon: "drink"     },
+  { id: "promos",    label: "Promos",     icon: "tag"       },
+  { id: "inventory", label: "Inventario", icon: "box"       },
+  { id: "users",     label: "Usuarios",   icon: "users"     },
 ];
 
+const PAY_METHODS = [
+  { id: "ef", label: "Efectivo", icon: "cash" },
+  { id: "ta", label: "Tarjeta",  icon: "card" },
+  { id: "qr", label: "QR/Trans.",icon: "qr"   },
+];
+
+const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
+const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
+
 export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
-  const [tab, setTab] = useState("dashboard");
+  // Persiste el tab activo en localStorage para que al recargar la página
+  // el admin vuelva a la misma sección donde estaba.
+  const [tab, setTab] = useState(() => localStorage.getItem("adminTab") || "dashboard");
   const [dashboard, setDashboard] = useState(null);
 
+  const changeTab = (id) => {
+    setTab(id);
+    localStorage.setItem("adminTab", id);
+  };
+
+  // Se recarga automáticamente cuando llegan eventos de socket (orders
+  // cambia como prop reactivo desde App.jsx, que escucha orders_updated).
   useEffect(() => {
     if (tab === "dashboard") {
       api.getDashboard().then(setDashboard).catch(() => {});
@@ -24,10 +44,9 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg }}>
-      {/* Header */}
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 20 }}>📊</span>
+          <Icon name="dashboard" size={20} color={C.neon} />
           <div>
             <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>ADMIN</div>
             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
@@ -36,40 +55,43 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
         <Btn size="sm" variant="ghost" onClick={onLogout}>Salir</Btn>
       </div>
 
-      {/* Tabs */}
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, display: "flex", overflowX: "auto" }}>
         {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)} style={{
-            padding: "10px 16px", border: "none", borderBottom: `2px solid ${tab === t.id ? C.neon : "transparent"}`,
+          <button key={t.id} onClick={() => changeTab(t.id)} style={{
+            padding: "10px 14px", border: "none", borderBottom: `2px solid ${tab === t.id ? C.neon : "transparent"}`,
             background: "transparent", color: tab === t.id ? C.neon : C.muted,
             fontSize: 12, cursor: "pointer", whiteSpace: "nowrap", fontFamily: "inherit", fontWeight: 500,
-          }}>{t.label}</button>
+            display: "flex", alignItems: "center", gap: 5,
+          }}>
+            <Icon name={t.icon} size={13} color={tab === t.id ? C.neon : C.muted} />
+            {t.label}
+          </button>
         ))}
       </div>
 
       <div style={{ flex: 1, overflowY: "auto", padding: 14 }}>
         {tab === "dashboard" && <DashboardTab data={dashboard} orders={orders} />}
-        {tab === "orders" && <OrdersTab orders={orders} onChanged={onOrdersChanged} />}
-        {tab === "menu" && <MenuTab products={products} onChanged={onProductsChanged} />}
-        {tab === "promos" && <PromosTab promos={promos} onChanged={onPromosChanged} />}
+        {tab === "orders"    && <OrdersTab orders={orders} onChanged={onOrdersChanged} />}
+        {tab === "menu"      && <MenuTab products={products} onChanged={onProductsChanged} />}
+        {tab === "promos"    && <PromosTab promos={promos} onChanged={onPromosChanged} />}
         {tab === "inventory" && <InventoryTab products={products} onChanged={onProductsChanged} />}
-        {tab === "users" && <UsersTab businessId={user.businessId} />}
+        {tab === "users"     && <UsersTab businessId={user.businessId} />}
       </div>
     </div>
   );
 }
 
-/* ─── Dashboard ─── */
+/* ─── Dashboard ─────────────────────────────────────────────────────────── */
 function DashboardTab({ data, orders }) {
   if (!data) return <div style={{ textAlign: "center", color: C.muted, marginTop: 40 }}>Cargando...</div>;
   return (
     <div className="fade-in">
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
         {[
-          { label: "Ventas hoy", value: fmt(data.totalToday || 0), color: C.neon },
-          { label: "Pagos cobrados", value: data.ordersToday || 0, color: C.blue },
-          { label: "Mesas activas", value: data.activeOrders ?? orders.filter(o => !o.is_closed).length, color: C.amber },
-          { label: "Ticket promedio", value: fmt(data.avgTicket || 0), color: C.neon2 },
+          { label: "Ventas hoy",     value: fmt(data.totalToday || 0),   color: C.neon  },
+          { label: "Pagos cobrados", value: data.ordersToday || 0,       color: C.blue  },
+          { label: "Mesas activas",  value: data.activeOrders ?? orders.filter(o => !o.is_closed).length, color: C.amber },
+          { label: "Ticket promedio",value: fmt(data.avgTicket || 0),    color: C.neon2 },
         ].map(stat => (
           <Card key={stat.label}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>{stat.label}</div>
@@ -77,13 +99,16 @@ function DashboardTab({ data, orders }) {
           </Card>
         ))}
       </div>
+
       {data.topProducts?.length > 0 && (
         <>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>Top productos</div>
           {data.topProducts.map((p, i) => (
             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
               <span style={{ color: C.muted, fontSize: 11, minWidth: 16 }}>#{i + 1}</span>
-              <span style={{ fontSize: 16 }}>{p.emoji}</span>
+              <div style={{ width: 24, height: 24, borderRadius: 4, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                <Icon name="drink" size={14} color={C.muted} />
+              </div>
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
               <Badge color={C.neon}>{p.qty} vendidos</Badge>
               <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.total)}</span>
@@ -91,12 +116,13 @@ function DashboardTab({ data, orders }) {
           ))}
         </>
       )}
+
       {data.byPayMethod?.length > 0 && (
         <div style={{ marginTop: 14 }}>
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>Por método de pago</div>
           {data.byPayMethod.map(m => (
             <div key={m.pay} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
-              <span>{m.pay === "ef" ? "💵 Efectivo" : m.pay === "ta" ? "💳 Tarjeta" : "📱 QR/Trans."}</span>
+              <span>{m.pay === "ef" ? "Efectivo" : m.pay === "ta" ? "Tarjeta" : "QR/Transferencia"}</span>
               <span style={{ color: C.neon }}>{fmt(m.total)}</span>
             </div>
           ))}
@@ -106,7 +132,7 @@ function DashboardTab({ data, orders }) {
   );
 }
 
-/* ─── Mesas / cuentas activas ─── */
+/* ─── Mesas ──────────────────────────────────────────────────────────────── */
 function OrdersTab({ orders, onChanged }) {
   const STATUS_COLOR = { pendiente: C.red, preparando: C.amber, listo: C.neon };
   const STATUS_LABEL = { pendiente: "Pendiente", preparando: "Preparando", listo: "Listo" };
@@ -122,8 +148,7 @@ function OrdersTab({ orders, onChanged }) {
       </div>
       {!active.length && <div style={{ textAlign: "center", color: C.muted, marginTop: 20, marginBottom: 20 }}>Sin mesas abiertas</div>}
       {active.map(order => {
-        const pending = order.items.filter(it => !it.paid);
-        const paidCount = order.items.length - pending.length;
+        const paidCount = order.items.filter(it => it.paid).length;
         return (
           <Card key={order.id} style={{ marginBottom: 10 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
@@ -137,17 +162,23 @@ function OrdersTab({ orders, onChanged }) {
             <div style={{ marginBottom: 6 }}>
               {order.items.map((item, idx) => (
                 <div key={idx} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "3px 0", fontSize: 12, opacity: item.paid ? 0.45 : 1 }}>
-                  <span>{item.qty}× {item.name} {item.paid && "✓"}</span>
+                  <span>{item.qty}× {item.name} {item.paid && <Icon name="check" size={10} color={C.neon} />}</span>
                   <Badge color={STATUS_COLOR[item.status] || C.muted}>{STATUS_LABEL[item.status] || item.status}</Badge>
                 </div>
               ))}
             </div>
-            {order.note && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>📝 {order.note}</div>}
+            {order.note && (
+              <div style={{ fontSize: 11, color: C.amber, marginBottom: 6, display: "flex", gap: 4, alignItems: "center" }}>
+                <Icon name="note" size={11} color={C.amber} /> {order.note}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontWeight: 600, color: C.neon }}>{fmt(order.total)}</span>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {paidCount > 0 && <Badge color={C.neon}>{paidCount} pagado{paidCount > 1 ? "s" : ""}</Badge>}
-                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>💳 Cobrar</Btn>
+                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>
+                  <Icon name="cash" size={12} color="#000" /> Cobrar
+                </Btn>
               </div>
             </div>
           </Card>
@@ -162,9 +193,7 @@ function OrdersTab({ orders, onChanged }) {
           {closed.map(order => (
             <Card key={order.id} style={{ marginBottom: 8, opacity: 0.6 }}>
               <div style={{ display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 12 }}>
-                  {/^B\d+$/.test(String(order.mesa)) ? `Barra ${order.mesa}` : `Mesa ${order.mesa}`}
-                </span>
+                <span style={{ fontSize: 12 }}>{/^B\d+$/.test(String(order.mesa)) ? `Barra ${order.mesa}` : `Mesa ${order.mesa}`}</span>
                 <span style={{ color: C.neon, fontSize: 12 }}>{fmt(order.total)}</span>
               </div>
             </Card>
@@ -172,150 +201,136 @@ function OrdersTab({ orders, onChanged }) {
         </>
       )}
 
-      {payModal && (
-        <AdminPayModal order={payModal} onClose={() => setPayModal(null)} onPaid={() => { setPayModal(null); onChanged(); }} />
-      )}
+      {payModal && <AdminPayModal order={payModal} onClose={() => setPayModal(null)} onPaid={() => { setPayModal(null); onChanged(); }} />}
     </div>
   );
 }
 
-const PAY_METHODS = [
-  { id: "ef", label: "Efectivo" },
-  { id: "ta", label: "Tarjeta" },
-  { id: "qr", label: "QR/Trans." },
-];
-
-// Mismo flujo de cobro parcial que tiene el mesero: el admin puede cobrar
-// cualquier mesa desde aquí (ej. si el mesero está ocupado), eligiendo qué
-// items se pagan y con qué método.
 function AdminPayModal({ order, onClose, onPaid }) {
   const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
   const [selected, setSelected] = useState(new Set(pendingIdx));
   const [pay, setPay] = useState("ef");
+  const [cash, setCash] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const toggle = (idx) => {
-    setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
-  };
+  const toggle = (idx) => setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
   const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
+  const cashNum = parseFloat(cash) || 0;
+  const change = cashNum > 0 ? cashNum - selectedTotal : null;
 
   const confirmPay = async () => {
-    if (!selected.size) { setError("Selecciona al menos un producto a cobrar"); return; }
+    if (!selected.size) { setError("Selecciona al menos un producto"); return; }
+    if (pay === "ef" && cashNum > 0 && cashNum < selectedTotal) { setError("El monto recibido es menor al total"); return; }
     setSaving(true); setError("");
-    try {
-      await api.payOrderItems(order.id, pay, [...selected]);
-      onPaid();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+    try { await api.payOrderItems(order.id, pay, [...selected]); onPaid(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   return (
     <Modal title={`Cobrar ${/^B\d+$/.test(String(order.mesa)) ? "Barra" : "Mesa"} ${order.mesa}`} onClose={onClose}>
       <ErrorBanner message={error} />
-      <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
+      <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 10 }}>
         {order.items.map((item, idx) => (
           <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
             <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
-            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}× {item.name} {item.paid && <span style={{ color: C.neon, fontSize: 10 }}>(pagado)</span>}</span>
+            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}x {item.name}{item.paid && <span style={{ color: C.neon, fontSize: 10 }}> (pagado)</span>}</span>
             <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
           </label>
         ))}
       </div>
-      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: pay === "ef" ? 8 : 12 }}>
         {PAY_METHODS.map(m => (
-          <button key={m.id} onClick={() => setPay(m.id)} style={{
-            flex: 1, padding: "6px 2px", borderRadius: 6, fontSize: 11,
+          <button key={m.id} onClick={() => { setPay(m.id); setCash(""); }} style={{
+            flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, cursor: "pointer",
             background: pay === m.id ? C.neon2 + "22" : "transparent",
             border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
-            color: pay === m.id ? C.neon2 : C.muted, cursor: "pointer",
-          }}>{m.label}</button>
+            color: pay === m.id ? C.neon2 : C.muted,
+            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
+          }}>
+            <Icon name={m.icon} size={16} color={pay === m.id ? C.neon2 : C.muted} />
+            {m.label}
+          </button>
         ))}
       </div>
+
+      {pay === "ef" && (
+        <div style={{ background: C.bg3, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Monto recibido</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+            {[50, 100, 200, 500, 1000].map(d => (
+              <button key={d} onClick={() => setCash(String(d))} style={{
+                padding: "4px 10px", borderRadius: 8, fontSize: 12, cursor: "pointer",
+                background: cash === String(d) ? C.neon + "22" : C.bg4,
+                border: `1px solid ${cash === String(d) ? C.neon : C.border}`,
+                color: cash === String(d) ? C.neon : C.muted,
+              }}>${d}</button>
+            ))}
+          </div>
+          <input type="number" min="0" value={cash} onChange={e => setCash(e.target.value)} placeholder="Otro monto..."
+            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border2}`, borderRadius: 8, color: C.text, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" }} />
+          {change !== null && change >= 0 && (
+            <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 12, color: C.muted }}>Cambio</span>
+              <span style={{ fontSize: 20, fontWeight: 700, color: C.neon }}>{fmt(change)}</span>
+            </div>
+          )}
+          {change !== null && change < 0 && <div style={{ marginTop: 8, fontSize: 12, color: C.red }}>Faltan {fmt(Math.abs(change))}</div>}
+        </div>
+      )}
+
       <Divider />
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
-        <span>A cobrar ahora</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
+        <span>Total</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
       </div>
       <div style={{ display: "flex", gap: 8 }}>
         <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
-        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>
-          {saving ? "Cobrando..." : "Confirmar pago"}
-        </Btn>
+        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>{saving ? "Cobrando..." : "Confirmar"}</Btn>
       </div>
     </Modal>
   );
 }
 
-/* ─── Menú ─── */
+/* ─── Menú ───────────────────────────────────────────────────────────────── */
 function MenuTab({ products, onChanged }) {
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
+  const [search, setSearch] = useState("");
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({
-    name: "", cat: "", price: "", stock: "", emoji: "🍹",
-    imageFile: null, previewUrl: null, remove_image: false,
-  });
+  const [form, setForm] = useState({ name: "", cat: "", price: "", stock: "", unlimited_stock: false, imageFile: null, previewUrl: null, remove_image: false });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const cats = [...new Set(products.map(p => p.cat))];
+
   const open = (p = null) => {
     setForm(p ? {
-      name: p.name, cat: p.cat, price: p.price, stock: p.stock, emoji: p.emoji,
-      imageFile: null, previewUrl: p.image_url ? `${API_URL}${p.image_url}` : null,
-      remove_image: false,
-    } : {
-      name: "", cat: "", price: "", stock: "", emoji: "🍹",
-      imageFile: null, previewUrl: null, remove_image: false,
-    });
-    setModal(p || "new");
-    setError("");
+      name: p.name, cat: p.cat, price: p.price, stock: p.stock,
+      unlimited_stock: !!p.unlimited_stock,
+      imageFile: null, previewUrl: p.image_url ? `${API_URL}${p.image_url}` : null, remove_image: false,
+    } : { name: "", cat: "", price: "", stock: "", unlimited_stock: false, imageFile: null, previewUrl: null, remove_image: false });
+    setModal(p || "new"); setError("");
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setForm(f => ({
-      ...f,
-      imageFile: file,
-      previewUrl: URL.createObjectURL(file),
-      remove_image: false,
-    }));
-  };
-
-  const removeImage = () => {
-    setForm(f => ({ ...f, imageFile: null, previewUrl: null, remove_image: true }));
+    const file = e.target.files[0]; if (!file) return;
+    setForm(f => ({ ...f, imageFile: file, previewUrl: URL.createObjectURL(file), remove_image: false }));
   };
 
   const save = async () => {
-    if (!form.name || !form.cat || !form.price) {
-      setError("Nombre, categoría y precio son obligatorios");
-      return;
-    }
+    if (!form.name || !form.cat || !form.price) { setError("Nombre, categoría y precio son obligatorios"); return; }
     setSaving(true);
     try {
       const payload = {
-        name: form.name,
-        cat: form.cat,
-        price: form.price,
-        stock: form.stock || 0,
-        emoji: form.emoji,
+        name: form.name, cat: form.cat, price: form.price,
+        stock: form.unlimited_stock ? 0 : (form.stock || 0),
+        unlimited_stock: form.unlimited_stock ? "true" : "false",
         ...(form.imageFile ? { image: form.imageFile } : {}),
         ...(form.remove_image ? { remove_image: "true" } : {}),
       };
-      if (modal === "new") {
-        await api.createProduct(payload);
-      } else {
-        await api.updateProduct(modal.id, payload);
-      }
-      onChanged();
-      setModal(null);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+      if (modal === "new") await api.createProduct(payload);
+      else await api.updateProduct(modal.id, payload);
+      onChanged(); setModal(null);
+    } catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const del = async (id) => {
@@ -323,87 +338,93 @@ function MenuTab({ products, onChanged }) {
     try { await api.deleteProduct(id); onChanged(); } catch (e) { alert(e.message); }
   };
 
-  const cats = [...new Set(products.map(p => p.cat))];
+  const filtered = search
+    ? products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+    : null;
 
   return (
     <div className="fade-in">
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{products.length} productos</div>
-        <Btn variant="primary" size="sm" onClick={() => open()}>+ Nuevo</Btn>
+        <Btn variant="primary" size="sm" onClick={() => open()}><Icon name="plus" size={13} /> Nuevo</Btn>
       </div>
 
-      {cats.map(cat => (
-        <div key={cat} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
-          {products.filter(p => p.cat === cat).map(p => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
-              {/* Imagen o emoji */}
-              {p.image_url ? (
-                <img
-                  src={`${API_URL}${p.image_url}`}
-                  alt={p.name}
-                  style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
-                />
-              ) : (
-                <span style={{ fontSize: 24, width: 36, textAlign: "center" }}>{p.emoji}</span>
-              )}
-              <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
-              <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
-              <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}>🗑️</Btn>
-            </div>
-          ))}
-        </div>
-      ))}
+      <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..." />
+
+      {(filtered || cats.map(cat => ({ cat, items: products.filter(p => p.cat === cat) }))).map((group, gi) => {
+        const items = filtered ? filtered : group.items;
+        const label = filtered ? null : group.cat;
+        if (!items.length) return null;
+        return (
+          <div key={gi} style={{ marginBottom: 14 }}>
+            {label && <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>}
+            {items.map(p => (
+              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
+                {p.image_url
+                  ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+                  : <div style={{ width: 36, height: 36, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                      <Icon name="drink" size={18} color={C.muted} />
+                    </div>
+                }
+                <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+                <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.price)}</span>
+                {p.unlimited_stock
+                  ? <Badge color={C.neon2}><Icon name="infinity" size={11} /></Badge>
+                  : <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock}</Badge>
+                }
+                <Btn size="sm" variant="ghost" onClick={() => open(p)}><Icon name="edit" size={13} /></Btn>
+                <Btn size="sm" variant="ghost" onClick={() => del(p.id)}><Icon name="trash" size={13} color={C.red} /></Btn>
+              </div>
+            ))}
+          </div>
+        );
+      })}
 
       {modal && (
         <Modal title={modal === "new" ? "Nuevo producto" : "Editar producto"} onClose={() => setModal(null)}>
           <ErrorBanner message={error} />
-
-          {/* Preview de imagen */}
           <div style={{ marginBottom: 14 }}>
-            {form.previewUrl ? (
-              <div style={{ position: "relative", display: "inline-block" }}>
-                <img
-                  src={form.previewUrl}
-                  alt="preview"
-                  style={{ width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border2}` }}
-                />
-                <button
-                  onClick={removeImage}
-                  style={{
-                    position: "absolute", top: 6, right: 6,
-                    background: "#000a", border: "none", color: "#fff",
-                    borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 12,
-                  }}
-                >✕</button>
-              </div>
-            ) : (
-              <label style={{
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-                height: 100, border: `2px dashed ${C.border2}`, borderRadius: 10,
-                color: C.muted, cursor: "pointer", fontSize: 12, gap: 6,
-              }}>
-                <span style={{ fontSize: 24 }}>📷</span>
-                <span>Toca para subir imagen</span>
-                <span style={{ fontSize: 10 }}>JPG, PNG o WebP · máx 3 MB</span>
-                <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: "none" }} />
-              </label>
-            )}
+            {form.previewUrl
+              ? <div style={{ position: "relative", display: "inline-block", width: "100%" }}>
+                  <img src={form.previewUrl} alt="preview" style={{ width: "100%", maxHeight: 160, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.border2}` }} />
+                  <button onClick={() => setForm(f => ({ ...f, imageFile: null, previewUrl: null, remove_image: true }))}
+                    style={{ position: "absolute", top: 6, right: 6, background: "#000a", border: "none", color: "#fff", borderRadius: "50%", width: 24, height: 24, cursor: "pointer", fontSize: 12 }}>
+                    <Icon name="close" size={12} color="#fff" />
+                  </button>
+                </div>
+              : <label style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: 100, border: `2px dashed ${C.border2}`, borderRadius: 10, color: C.muted, cursor: "pointer", fontSize: 12, gap: 6 }}>
+                  <Icon name="camera" size={24} color={C.muted} />
+                  <span>Toca para subir imagen</span>
+                  <span style={{ fontSize: 10 }}>JPG, PNG o WebP · máx 3 MB</span>
+                  <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: "none" }} />
+                </label>
+            }
           </div>
-
-          <Input label="Emoji (si no hay imagen)" value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} />
           <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <Input label="Categoría" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cócteles" />
           <Input label="Precio" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
-          <Input label="Stock inicial" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
+
+          {/* Toggle de stock ilimitado */}
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
+              <div onClick={() => setForm(f => ({ ...f, unlimited_stock: !f.unlimited_stock }))} style={{
+                width: 38, height: 22, borderRadius: 11, background: form.unlimited_stock ? C.neon2 : C.bg4,
+                border: `1px solid ${form.unlimited_stock ? C.neon2 : C.border2}`, position: "relative", transition: "all .2s", cursor: "pointer",
+              }}>
+                <div style={{ position: "absolute", top: 2, left: form.unlimited_stock ? 17 : 2, width: 16, height: 16, borderRadius: "50%", background: form.unlimited_stock ? "#fff" : C.muted, transition: "all .2s" }} />
+              </div>
+              <span style={{ fontSize: 12, color: C.text }}>Stock ilimitado (bebidas preparadas)</span>
+            </label>
+            {form.unlimited_stock && <div style={{ fontSize: 11, color: C.neon2, marginTop: 4 }}>Este producto nunca bloqueará cobros por falta de stock</div>}
+          </div>
+
+          {!form.unlimited_stock && (
+            <Input label="Stock" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
+          )}
 
           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
             <Btn variant="ghost" onClick={() => setModal(null)} style={{ flex: 1 }}>Cancelar</Btn>
-            <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
-              {saving ? "Guardando..." : "Guardar"}
-            </Btn>
+            <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>{saving ? "Guardando..." : "Guardar"}</Btn>
           </div>
         </Modal>
       )}
@@ -411,26 +432,22 @@ function MenuTab({ products, onChanged }) {
   );
 }
 
-/* ─── Promos ─── */
+/* ─── Promos ──────────────────────────────────────────────────────────────── */
 function PromosTab({ promos, onChanged }) {
   const [modal, setModal] = useState(null);
-  const [form, setForm] = useState({ name: "", desc: "", type: "percent", discount: "", emoji: "🏷️" });
+  const [form, setForm] = useState({ name: "", desc: "", type: "percent", discount: "" });
   const [error, setError] = useState("");
 
   const open = (p = null) => {
-    setForm(p ? { name: p.name, desc: p.desc || "", type: p.type, discount: p.discount, emoji: p.emoji } : { name: "", desc: "", type: "percent", discount: "", emoji: "🏷️" });
-    setModal(p || "new");
-    setError("");
+    setForm(p ? { name: p.name, desc: p.desc || "", type: p.type, discount: p.discount } : { name: "", desc: "", type: "percent", discount: "" });
+    setModal(p || "new"); setError("");
   };
 
   const save = async () => {
     if (!form.name) { setError("El nombre es obligatorio"); return; }
     try {
-      if (modal === "new") {
-        await api.createPromo({ ...form, discount: +form.discount || 0 });
-      } else {
-        await api.updatePromo(modal.id, { ...form, discount: +form.discount || 0 });
-      }
+      if (modal === "new") await api.createPromo({ ...form, discount: +form.discount || 0 });
+      else await api.updatePromo(modal.id, { ...form, discount: +form.discount || 0 });
       onChanged(); setModal(null);
     } catch (e) { setError(e.message); }
   };
@@ -439,25 +456,25 @@ function PromosTab({ promos, onChanged }) {
     <div className="fade-in">
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{promos.length} promociones</div>
-        <Btn variant="primary" size="sm" onClick={() => open()}>+ Nueva</Btn>
+        <Btn variant="primary" size="sm" onClick={() => open()}><Icon name="plus" size={13} /> Nueva</Btn>
       </div>
       {promos.map(p => (
         <Card key={p.id} style={{ marginBottom: 10 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 22 }}>{p.emoji}</span>
+            <div style={{ width: 32, height: 32, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+              <Icon name="tag" size={16} color={C.amber} />
+            </div>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500, fontSize: 13 }}>{p.name}</div>
               <div style={{ fontSize: 11, color: C.muted }}>{p.desc}</div>
-              <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>
-                {p.type === "2x1" ? "2×1" : `${p.discount}% descuento`}
-              </div>
+              <div style={{ fontSize: 11, color: C.amber, marginTop: 2 }}>{p.type === "2x1" ? "2×1" : `${p.discount}% descuento`}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <Badge color={p.active ? C.neon : C.muted}>{p.active ? "Activa" : "Inactiva"}</Badge>
               <Btn size="sm" variant="ghost" onClick={async () => { await api.togglePromo(p.id); onChanged(); }}>
-                {p.active ? "⏸" : "▶️"}
+                {p.active ? "Pausar" : "Activar"}
               </Btn>
-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => open(p)}><Icon name="edit" size={13} /></Btn>
             </div>
           </div>
         </Card>
@@ -466,7 +483,6 @@ function PromosTab({ promos, onChanged }) {
       {modal && (
         <Modal title={modal === "new" ? "Nueva promo" : "Editar promo"} onClose={() => setModal(null)}>
           <ErrorBanner message={error} />
-          <Input label="Emoji" value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} />
           <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <Input label="Descripción (opcional)" value={form.desc} onChange={e => setForm(f => ({ ...f, desc: e.target.value }))} />
           <div style={{ marginBottom: 12 }}>
@@ -474,9 +490,10 @@ function PromosTab({ promos, onChanged }) {
             <div style={{ display: "flex", gap: 8 }}>
               {["percent", "2x1"].map(t => (
                 <button key={t} onClick={() => setForm(f => ({ ...f, type: t }))} style={{
-                  flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${form.type === t ? C.neon : C.border}`,
-                  background: form.type === t ? C.neon + "22" : "transparent", color: form.type === t ? C.neon : C.muted,
-                  cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                  flex: 1, padding: "7px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit",
+                  border: `1px solid ${form.type === t ? C.neon : C.border}`,
+                  background: form.type === t ? C.neon + "22" : "transparent",
+                  color: form.type === t ? C.neon : C.muted, fontSize: 12,
                 }}>{t === "percent" ? "% Descuento" : "2×1"}</button>
               ))}
             </div>
@@ -494,10 +511,11 @@ function PromosTab({ promos, onChanged }) {
   );
 }
 
-/* ─── Inventario ─── */
+/* ─── Inventario ──────────────────────────────────────────────────────────── */
 function InventoryTab({ products, onChanged }) {
   const [editing, setEditing] = useState(null);
   const [val, setVal] = useState("");
+  const [toggling, setToggling] = useState(null);
 
   const adjust = async (id, delta) => {
     try { await api.adjustStock(id, delta); onChanged(); } catch (e) { alert(e.message); }
@@ -509,36 +527,61 @@ function InventoryTab({ products, onChanged }) {
     try { await api.setStock(id, n); onChanged(); setEditing(null); } catch (e) { alert(e.message); }
   };
 
+  const toggleUnlimited = async (p) => {
+    setToggling(p.id);
+    try { await api.toggleUnlimitedStock(p.id, !p.unlimited_stock); onChanged(); }
+    catch (e) { alert(e.message); } finally { setToggling(null); }
+  };
+
   return (
     <div className="fade-in">
       {products.map(p => (
-        <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
-          <span style={{ fontSize: 18 }}>{p.emoji}</span>
-          <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
-          {editing === p.id ? (
-            <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-              <input type="number" value={val} onChange={e => setVal(e.target.value)} autoFocus
-                style={{ width: 60, background: C.bg4, border: `1px solid ${C.neon}`, borderRadius: 6, color: C.text, padding: "3px 6px", fontSize: 12 }} />
-              <Btn size="sm" variant="primary" onClick={() => setStock(p.id)}>✓</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => setEditing(null)}>✕</Btn>
-            </div>
-          ) : (
-            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Badge color={p.stock === 0 ? C.red : p.stock < 5 ? C.amber : C.muted}>{p.stock}</Badge>
-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, -1)}>−</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, +1)}>+</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}>✏️</Btn>
-            </div>
-          )}
+        <div key={p.id} style={{ padding: "10px 0", borderBottom: `1px solid ${C.border}` }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {p.image_url
+              ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: 32, height: 32, borderRadius: 6, objectFit: "cover", flexShrink: 0 }} />
+              : <div style={{ width: 32, height: 32, borderRadius: 6, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <Icon name="drink" size={16} color={C.muted} />
+                </div>
+            }
+            <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+
+            {/* Toggle de ilimitado */}
+            <button onClick={() => toggleUnlimited(p)} disabled={toggling === p.id} title="Stock ilimitado" style={{
+              width: 32, height: 20, borderRadius: 10,
+              background: p.unlimited_stock ? C.neon2 : C.bg4,
+              border: `1px solid ${p.unlimited_stock ? C.neon2 : C.border2}`,
+              position: "relative", cursor: "pointer", transition: "all .2s", flexShrink: 0,
+            }}>
+              <div style={{ position: "absolute", top: 1, left: p.unlimited_stock ? 13 : 1, width: 16, height: 16, borderRadius: "50%", background: p.unlimited_stock ? "#fff" : C.muted, transition: "all .2s" }} />
+            </button>
+
+            {p.unlimited_stock ? (
+              <Badge color={C.neon2}><Icon name="infinity" size={11} /></Badge>
+            ) : editing === p.id ? (
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <input type="number" value={val} onChange={e => setVal(e.target.value)} autoFocus
+                  style={{ width: 56, background: C.bg4, border: `1px solid ${C.neon}`, borderRadius: 6, color: C.text, padding: "3px 6px", fontSize: 12 }} />
+                <Btn size="sm" variant="primary" onClick={() => setStock(p.id)}><Icon name="check" size={11} /></Btn>
+                <Btn size="sm" variant="ghost" onClick={() => setEditing(null)}><Icon name="close" size={11} /></Btn>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Badge color={p.stock === 0 ? C.red : p.stock < 5 ? C.amber : C.muted}>{p.stock}</Badge>
+                <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, -1)}><Icon name="minus" size={11} /></Btn>
+                <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, +1)}><Icon name="plus" size={11} /></Btn>
+                <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}><Icon name="edit" size={11} /></Btn>
+              </div>
+            )}
+          </div>
+          {p.unlimited_stock && <div style={{ fontSize: 10, color: C.neon2, marginTop: 4, paddingLeft: 42 }}>Sin control de cantidad</div>}
         </div>
       ))}
     </div>
   );
 }
-/* ─── Usuarios (meseros, barman, otros admins del negocio) ─── */
-const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
-const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
 
+/* ─── Usuarios ────────────────────────────────────────────────────────────── */
 function UsersTab({ businessId }) {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -552,32 +595,17 @@ function UsersTab({ businessId }) {
   };
   useEffect(load, [businessId]);
 
-  const openNew = () => {
-    setForm({ name: "", role: "mesero", pin: "" });
-    setError(""); setModal(true);
-  };
-
   const save = async () => {
     if (!form.name.trim()) { setError("El nombre es obligatorio"); return; }
     if (!/^\d{4,6}$/.test(form.pin)) { setError("El PIN debe ser numérico, de 4 a 6 dígitos"); return; }
     setSaving(true); setError("");
-    try {
-      await api.createBusinessUser(businessId, form);
-      setModal(false);
-      load();
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setSaving(false);
-    }
+    try { await api.createBusinessUser(businessId, form); setModal(false); load(); }
+    catch (e) { setError(e.message); } finally { setSaving(false); }
   };
 
   const remove = async (u) => {
     if (!confirm(`¿Eliminar a ${u.name}? Ya no podrá iniciar sesión.`)) return;
-    try {
-      await api.deleteBusinessUser(businessId, u.id);
-      load();
-    } catch (e) { alert(e.message); }
+    try { await api.deleteBusinessUser(businessId, u.id); load(); } catch (e) { alert(e.message); }
   };
 
   if (loading) return <div style={{ textAlign: "center", color: C.muted, marginTop: 40 }}>Cargando...</div>;
@@ -585,14 +613,14 @@ function UsersTab({ businessId }) {
   return (
     <div className="fade-in">
       <div style={{ fontSize: 11, color: C.muted, marginBottom: 12 }}>
-        Cada mesero/barman con su propio PIN queda registrado en cada orden y pago que haga —
-        así sabes quién atendió cada mesa y quién cobró cada cuenta.
+        Cada usuario con su propio PIN queda registrado en órdenes y pagos.
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{users.length} usuarios</div>
-        <Btn variant="primary" size="sm" onClick={openNew}>+ Nuevo usuario</Btn>
+        <Btn variant="primary" size="sm" onClick={() => { setForm({ name: "", role: "mesero", pin: "" }); setError(""); setModal(true); }}>
+          <Icon name="plus" size={13} /> Nuevo
+        </Btn>
       </div>
-
       {users.map(u => (
         <Card key={u.id} style={{ marginBottom: 8 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -601,7 +629,7 @@ function UsersTab({ businessId }) {
               <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
             </div>
             <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
-            <Btn size="sm" variant="ghost" onClick={() => remove(u)}>🗑</Btn>
+            <Btn size="sm" variant="ghost" onClick={() => remove(u)}><Icon name="trash" size={13} color={C.red} /></Btn>
           </div>
         </Card>
       ))}
@@ -615,25 +643,20 @@ function UsersTab({ businessId }) {
             <div style={{ display: "flex", gap: 8 }}>
               {["mesero", "barman", "admin"].map(r => (
                 <button key={r} onClick={() => setForm(f => ({ ...f, role: r }))} style={{
-                  flex: 1, padding: "7px", borderRadius: 8, border: `1px solid ${form.role === r ? C.neon : C.border}`,
-                  background: form.role === r ? C.neon + "22" : "transparent", color: form.role === r ? C.neon : C.muted,
-                  cursor: "pointer", fontSize: 12, fontFamily: "inherit",
+                  flex: 1, padding: "7px", borderRadius: 8, cursor: "pointer", fontFamily: "inherit",
+                  border: `1px solid ${form.role === r ? C.neon : C.border}`,
+                  background: form.role === r ? C.neon + "22" : "transparent",
+                  color: form.role === r ? C.neon : C.muted, fontSize: 12,
                 }}>{ROLE_LABEL[r]}</button>
               ))}
             </div>
           </div>
-          <Input
-            label="PIN (4-6 dígitos, único en este negocio)"
-            value={form.pin}
+          <Input label="PIN (4-6 dígitos)" value={form.pin}
             onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))}
-            placeholder="ej. 4521"
-            maxLength={6}
-          />
+            placeholder="ej. 4521" maxLength={6} />
           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
             <Btn variant="ghost" onClick={() => setModal(false)} style={{ flex: 1 }}>Cancelar</Btn>
-            <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
-              {saving ? "Guardando..." : "Guardar"}
-            </Btn>
+            <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>{saving ? "Guardando..." : "Guardar"}</Btn>
           </div>
         </Modal>
       )}

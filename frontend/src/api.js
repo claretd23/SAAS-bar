@@ -68,6 +68,7 @@ export const api = {
   deleteProduct: (id) => request(`/products/${id}`, { method: "DELETE" }),
   adjustStock: (id, delta) => request(`/products/${id}/stock`, { method: "PATCH", body: { delta } }),
   setStock: (id, stock) => request(`/products/${id}/stock`, { method: "PATCH", body: { set: stock } }),
+  toggleUnlimitedStock: (id, val) => request(`/products/${id}/unlimited-stock`, { method: "PATCH", body: { unlimited_stock: val } }),
 
   // Promos
   getPromos: () => request("/promos"),

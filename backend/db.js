@@ -118,6 +118,15 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
   db.exec("DROP TABLE IF EXISTS orders_new");
   db.exec("DELETE FROM payments WHERE id LIKE 'mig_%'");
 
+  // PRAGMA foreign_keys no se puede cambiar dentro de una transaccion (SQLite
+  // lo ignora silenciosamente si se intenta en medio de un BEGIN). Como vamos
+  // a hacer DROP TABLE orders mientras 'payments' tiene filas que la
+  // referencian via FOREIGN KEY, hay que desactivarlo ANTES de abrir la
+  // transaccion, y reactivarlo despues de que termine (haya tenido exito o
+  // fallado) para no dejar la conexion sin esa proteccion en el uso normal.
+  const fkWasOn = db.pragma("foreign_keys", { simple: true });
+  db.pragma("foreign_keys = OFF");
+
   // Todo el bloque corre en una sola transaccion: si algo falla o el
   // proceso se reinicia a la mitad, SQLite revierte todo y la tabla
   // 'orders' original queda intacta para reintentar limpio la proxima vez.
@@ -181,8 +190,14 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
     return oldOrders.length;
   });
 
-  const migratedCount = migrateOrders();
-  console.log(`Migracion: ${migratedCount} ordenes migradas al nuevo modelo`);
+  try {
+    const migratedCount = migrateOrders();
+    console.log(`Migracion: ${migratedCount} ordenes migradas al nuevo modelo`);
+  } finally {
+    // Se reactiva siempre, exito o fallo, para no dejar la conexion sin
+    // esta proteccion en el resto de la vida del proceso.
+    if (fkWasOn) db.pragma("foreign_keys = ON");
+  }
 }
 
 export default db;

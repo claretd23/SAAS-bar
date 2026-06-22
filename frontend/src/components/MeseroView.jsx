@@ -12,8 +12,11 @@ const PAY_METHODS = [
 
 export default function MeseroView({ user, products, promos, orders, onOrdersChanged, onLogout }) {
   const cats = [...new Set(products.map(p => p.cat))];
-  const [mesa, setMesaState] = useState(() => parseInt(localStorage.getItem("lastMesa") || "1"));
-  const setMesa = (m) => { setMesaState(m); localStorage.setItem("lastMesa", String(m)); };
+  // lastMesa es preferencia de ESTA pestana/sesion (no del negocio), por
+  // eso va en sessionStorage: si el mismo navegador tiene otra pestana con
+  // otro rol/usuario, no se mezclan las mesas seleccionadas entre ambas.
+  const [mesa, setMesaState] = useState(() => parseInt(sessionStorage.getItem("lastMesa") || "1"));
+  const setMesa = (m) => { setMesaState(m); sessionStorage.setItem("lastMesa", String(m)); };
   const [mesaCount, setMesaCount] = useState(() => parseInt(localStorage.getItem("mesaCount") || "10"));
   const [cat, setCat] = useState(cats[0] || "");
   const [search, setSearch] = useState("");

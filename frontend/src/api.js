@@ -1,7 +1,11 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
+// sessionStorage en vez de localStorage: la sesion queda aislada por
+// pestana. Asi, si en un mismo navegador se abre una pestana como admin
+// y otra como mesero/barman, no se pisan entre si al recargar -- cada
+// pestana mantiene su propio rol hasta que se cierra.
 function getToken() {
-  return localStorage.getItem("token");
+  return sessionStorage.getItem("token");
 }
 
 async function request(path, { method = "GET", body } = {}) {
@@ -90,15 +94,15 @@ export const api = {
 };
 
 export function saveSession(token, user) {
-  localStorage.setItem("token", token);
-  localStorage.setItem("user", JSON.stringify(user));
+  sessionStorage.setItem("token", token);
+  sessionStorage.setItem("user", JSON.stringify(user));
 }
 export function getSession() {
   const token = getToken();
-  const user = localStorage.getItem("user");
+  const user = sessionStorage.getItem("user");
   return token && user ? { token, user: JSON.parse(user) } : null;
 }
 export function clearSession() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
 }

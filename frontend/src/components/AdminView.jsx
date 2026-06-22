@@ -24,14 +24,15 @@ const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
 const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
 
 export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
-  // Persiste el tab activo en localStorage para que al recargar la página
-  // el admin vuelva a la misma sección donde estaba.
-  const [tab, setTab] = useState(() => localStorage.getItem("adminTab") || "dashboard");
+  // Persiste el tab activo en sessionStorage (no localStorage) para que
+  // sea propio de ESTA pestana/sesion -- si el navegador tiene otra
+  // pestana con otra cuenta de admin, no se pisan el tab entre si.
+  const [tab, setTab] = useState(() => sessionStorage.getItem("adminTab") || "dashboard");
   const [dashboard, setDashboard] = useState(null);
 
   const changeTab = (id) => {
     setTab(id);
-    localStorage.setItem("adminTab", id);
+    sessionStorage.setItem("adminTab", id);
   };
 
   // Se recarga automáticamente cuando llegan eventos de socket (orders

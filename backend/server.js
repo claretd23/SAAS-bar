@@ -33,11 +33,12 @@ const io = new Server(httpServer, { cors: { origin: "*" } });
 io.on("connection", (socket) => {
   socket.on("join_business", (businessId) => {
     socket.join(businessId);
+    console.log(`[socket] cliente ${socket.id} se unio al room: ${businessId}`);
   });
-  // El cliente lo emite tras cada reconexión. Por ahora el resync real lo
-  // hace el cliente (vuelve a pedir /api/orders y /api/products), pero deja
-  // el hook listo si más adelante se quiere reenviar algo desde el servidor.
   socket.on("resync_requested", () => {});
+  socket.on("disconnect", (reason) => {
+    console.log(`[socket] cliente ${socket.id} desconectado: ${reason}`);
+  });
 });
 
 app.set("io", io);

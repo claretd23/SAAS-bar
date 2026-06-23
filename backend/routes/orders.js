@@ -71,6 +71,7 @@ router.post("/", requireRole("mesero", "barman", "admin", "superadmin"), (req, r
   const order = db.prepare("SELECT * FROM orders WHERE id = ?").get(result.id);
 
   req.app.get("io").to(req.user.businessId).emit("orders_updated");
+  console.log(`[orders] nueva orden en room: ${req.user.businessId}`);
   res.json(parseOrder(order));
 });
 

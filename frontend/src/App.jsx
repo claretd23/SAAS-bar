@@ -49,13 +49,10 @@ export default function App() {
 
     const socket = connectSocket(user.businessId);
 
-    // IMPORTANTE: los listeners se registran ANTES de que el socket
-    // pueda emitir eventos, para evitar race conditions donde el evento
-    // "connect" llega antes de que el listener esté registrado.
+    // Al (re)conectar, volvemos a pedir todos los datos por si se perdieron
+    // eventos mientras el socket estuvo caído. El join_business lo maneja
+    // socket.js directamente en su listener de "connect".
     socket.on("connect", () => {
-      // Forzar re-entrada al room en cada conexión/reconexión, por si
-      // el servidor reinició y perdió el estado del room.
-      socket.emit("join_business", user.businessId);
       loadData();
     });
 

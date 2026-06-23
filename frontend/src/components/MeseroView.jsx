@@ -196,7 +196,33 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
           )}
 
           <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
-            {!cartItems.length && <div style={{ textAlign: "center", color: C.muted, marginTop: 40, fontSize: 12 }}>Sin productos en la ronda</div>}
+
+            {/* Items ya enviados a la mesa — historial acumulado */}
+            {mesaOrder && mesaOrder.items.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                  <Icon name="check" size={10} color={C.muted} /> Ya en cuenta
+                </div>
+                {mesaOrder.items.filter(it => !it.paid).map((item, idx) => (
+                  <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: `1px solid ${C.border}`, opacity: 0.7 }}>
+                    <div style={{ flex: 1, fontSize: 11, color: C.muted }}>{item.qty}× {item.name}</div>
+                    <div style={{ fontSize: 11, color: C.muted }}>{fmt(item.price * item.qty)}</div>
+                    <div style={{ width: 12 }}>
+                      {item.status === "listo" && <Icon name="check" size={10} color={C.neon} />}
+                      {item.status === "preparando" && <Icon name="minus" size={10} color={C.amber} />}
+                    </div>
+                  </div>
+                ))}
+                {cartItems.length > 0 && (
+                  <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", letterSpacing: 1, margin: "10px 0 6px", display: "flex", alignItems: "center", gap: 4 }}>
+                    <Icon name="plus" size={10} color={C.muted} /> Nueva ronda
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!cartItems.length && !mesaOrder && <div style={{ textAlign: "center", color: C.muted, marginTop: 40, fontSize: 12 }}>Sin productos en la ronda</div>}
+            {!cartItems.length && mesaOrder && <div style={{ textAlign: "center", color: C.muted, marginTop: 12, fontSize: 11 }}>Agrega más productos o cobra la cuenta</div>}
             {cartItems.map(item => (
               <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}` }}>
                 {item.image_url

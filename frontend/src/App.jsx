@@ -49,15 +49,16 @@ export default function App() {
 
     const socket = connectSocket(user.businessId);
 
-    // Se dispara en la primera conexión Y en cada reconexión (ej. el iPad
-    // se quedó en reposo, se cortó el WiFi un momento, etc.). Volvemos a
-    // pedir el estado completo para no quedar desincronizados con eventos
-    // que se hayan perdido mientras el socket estuvo caído.
+    // IMPORTANTE: los listeners se registran ANTES de que el socket
+    // pueda emitir eventos, para evitar race conditions donde el evento
+    // "connect" llega antes de que el listener esté registrado.
     socket.on("connect", () => {
+      // Forzar re-entrada al room en cada conexión/reconexión, por si
+      // el servidor reinició y perdió el estado del room.
+      socket.emit("join_business", user.businessId);
       loadData();
     });
 
-    // El backend emite "orders_updated" cuando cambia algo
     socket.on("orders_updated", () => {
       api.getOrders().then(setOrders).catch(() => {});
     });

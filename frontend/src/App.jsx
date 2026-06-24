@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { C, globalStyles } from "./styles.js";
 import { api, getSession, clearSession } from "./api.js";
@@ -10,7 +10,6 @@ import AdminView from "./components/AdminView.jsx";
 import SuperAdminView from "./superadmin/SuperAdminView.jsx";
 import SuperAdminLogin from "./superadmin/SuperAdminLogin.jsx";
 
-// Inyecta estilos globales una sola vez
 const style = document.createElement("style");
 style.textContent = globalStyles;
 document.head.appendChild(style);
@@ -21,19 +20,20 @@ export default function App() {
   const [promos, setPromos] = useState([]);
   const [orders, setOrders] = useState([]);
   const [ready, setReady] = useState(false);
+  // useRef para guardar el businessId activo sin que cambie entre renders
+  const businessIdRef = useRef(null);
 
   const loadData = useCallback(async () => {
     try {
-      const [p, pr, o] = await Promise.all([api.getProducts(), api.getPromos(), api.getOrders()]);
+      const [p, pr, o] = await Promise.all([
+        api.getProducts(),
+        api.getPromos(),
+        api.getOrders(),
+      ]);
       setProducts(p);
       setPromos(pr);
       setOrders(o);
     } catch (e) {
-      console.error("Error cargando datos:", e);
-      // Si el token expiró o es inválido, el backend responde 401 ("Token
-      // inválido" / "Sin token"). En ese caso limpiamos la sesión para que
-      // la persona vuelva al login en vez de quedarse en una pantalla en
-      // blanco o con datos viejos sin poder hacer nada.
       if (e.message?.includes("Token inválido") || e.message?.includes("Sin token")) {
         clearSession();
         setUser(null);
@@ -44,26 +44,44 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user || user.role === "superadmin") { setReady(true); return; }
+    if (!user || user.role === "superadmin") {
+      setReady(true);
+      return;
+    }
+
+    // Si ya tenemos un socket activo para este mismo negocio, no lo
+    // reconectamos — solo agregamos/actualizamos los listeners.
+    const socket = connectSocket(user.businessId);
+    businessIdRef.current = user.businessId;
+
+    // Carga inicial de datos
     loadData();
 
-    const socket = connectSocket(user.businessId);
+    // Limpia listeners previos ANTES de registrar nuevos.
+    // Esto evita que se acumulen si React re-ejecuta el effect.
+    socket.off("connect");
+    socket.off("orders_updated");
+    socket.off("products_updated");
 
-    // Al (re)conectar, volvemos a pedir todos los datos por si se perdieron
-    // eventos mientras el socket estuvo caído. El join_business lo maneja
-    // socket.js directamente en su listener de "connect".
     socket.on("connect", () => {
-      loadData();
+      // Al reconectar (ej. el WiFi se cortó un momento), volvemos a pedir
+      // datos completos para no perdernos eventos que llegaron mientras
+      // el socket estuvo caído.
+      if (businessIdRef.current) loadData();
     });
 
     socket.on("orders_updated", () => {
       api.getOrders().then(setOrders).catch(() => {});
     });
+
     socket.on("products_updated", () => {
       api.getProducts().then(setProducts).catch(() => {});
     });
 
-    return () => disconnectSocket();
+    // SIN cleanup de socket aquí. React StrictMode en desarrollo hace
+    // mount → cleanup → mount inmediatamente, lo que destruiría el socket
+    // antes de que pueda recibir eventos. El socket solo se desconecta
+    // en logout explícito (handleLogout) o al cerrar la pestaña.
   }, [user, loadData]);
 
   const handleLogin = (u) => setUser(u);
@@ -71,6 +89,7 @@ export default function App() {
   const handleLogout = () => {
     clearSession();
     disconnectSocket();
+    businessIdRef.current = null;
     setUser(null);
     setProducts([]);
     setPromos([]);
@@ -87,11 +106,6 @@ export default function App() {
 
   return (
     <Routes>
-      {/* Ruta dedicada para el superadmin: /superadmin
-          - Sin sesión de superadmin -> pantalla de login propia
-          - Con sesión de superadmin -> panel de superadmin
-          Si alguien con sesión de negocio (mesero/barman/admin) visita esta
-          URL, lo regresamos a "/" para no mezclar los dos mundos. */}
       <Route
         path="/superadmin"
         element={
@@ -102,8 +116,6 @@ export default function App() {
                 : <Navigate to="/" replace />)
         }
       />
-
-      {/* Todo lo demás: flujo normal de negocio (mesero/barman/admin) */}
       <Route path="/*" element={<BusinessApp
         user={user}
         isSuperAdmin={isSuperAdmin}
@@ -120,13 +132,8 @@ export default function App() {
   );
 }
 
-// Flujo de negocio normal (lo que antes vivía directo en App). Separado para
-// no mezclar su lógica de socket/carga de datos con la ruta de superadmin.
 function BusinessApp({ user, isSuperAdmin, products, promos, orders, setProducts, setPromos, setOrders, handleLogin, handleLogout }) {
   if (!user) return <Login onLogin={handleLogin} />;
-
-  // Alguien con sesión de superadmin cayó en una ruta de negocio (ej. refrescó
-  // estando en "/" después de loguearse como superadmin en otra pestaña).
   if (isSuperAdmin) return <Navigate to="/superadmin" replace />;
 
   const commonProps = {

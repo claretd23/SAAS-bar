@@ -3,15 +3,25 @@ import { io } from "socket.io-client";
 const SOCKET_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 let socket = null;
+let currentBusinessId = null;
 
 export function connectSocket(businessId) {
-  // Si ya hay un socket para este mismo businessId conectado, lo reutiliza.
-  // Si hay uno para otro negocio, lo desconecta primero.
+  // Si ya hay un socket conectado para este negocio, lo devuelve tal cual.
+  // Esto es crítico: App.jsx llama connectSocket cada vez que el useEffect
+  // corre (re-renders, StrictMode, etc.), y no queremos crear un socket
+  // nuevo cada vez.
+  if (socket && socket.connected && currentBusinessId === businessId) {
+    return socket;
+  }
+
+  // Hay socket pero para otro negocio, o está desconectado: limpia y reconecta.
   if (socket) {
-    if (socket.connected && socket._businessId === businessId) return socket;
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
   }
+
+  currentBusinessId = businessId;
 
   socket = io(SOCKET_URL, {
     reconnection: true,
@@ -21,34 +31,26 @@ export function connectSocket(businessId) {
     timeout: 10000,
   });
 
-  socket._businessId = businessId;
-
-  // join_business se emite SOLO desde aquí, una vez por conexión/reconexión.
-  // App.jsx registra sus propios listeners (orders_updated, etc.) sobre el
-  // mismo objeto socket que retornamos, sin duplicar el join.
+  // join_business se emite desde aquí en cada conexión/reconexión.
+  // Los listeners de negocio (orders_updated, etc.) los registra App.jsx
+  // sobre el mismo objeto socket que retornamos.
   socket.on("connect", () => {
-    console.log("[socket] conectado, entrando al room:", businessId);
+    console.log("[socket] conectado, room:", businessId);
     socket.emit("join_business", businessId);
   });
 
   socket.on("connect_error", (err) => {
-    console.warn("[socket] error de conexion:", err.message);
+    console.warn("[socket] error:", err.message);
   });
 
-  socket.on("disconnect", (reason) => {
-    console.log("[socket] desconectado:", reason);
-  });
-
-  return socket;
-}
-
-export function getSocket() {
   return socket;
 }
 
 export function disconnectSocket() {
   if (socket) {
+    socket.removeAllListeners();
     socket.disconnect();
     socket = null;
+    currentBusinessId = null;
   }
 }

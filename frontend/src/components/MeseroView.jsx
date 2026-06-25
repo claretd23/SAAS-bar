@@ -12,9 +12,6 @@ const PAY_METHODS = [
 
 export default function MeseroView({ user, products, promos, orders, onOrdersChanged, onLogout }) {
   const cats = [...new Set(products.map(p => p.cat))];
-  // lastMesa es preferencia de ESTA pestana/sesion (no del negocio), por
-  // eso va en sessionStorage: si el mismo navegador tiene otra pestana con
-  // otro rol/usuario, no se mezclan las mesas seleccionadas entre ambas.
   const [mesa, setMesaState] = useState(() => parseInt(sessionStorage.getItem("lastMesa") || "1"));
   const setMesa = (m) => { setMesaState(m); sessionStorage.setItem("lastMesa", String(m)); };
   const [mesaCount, setMesaCount] = useState(() => parseInt(localStorage.getItem("mesaCount") || "10"));
@@ -65,11 +62,22 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
     setSending(true);
     try {
       await api.createOrder({ mesa, items: cartItems, note });
-      setCart({}); setNote(""); setDisc(0); setSplit(1); setActivePromo(null);
-      setSent(true); setTimeout(() => setSent(false), 2000);
-      onOrdersChanged();
-    } catch (e) { alert("Error: " + e.message); }
-    finally { setSending(false); }
+      // FIX: esperamos a que orders se actualice ANTES de limpiar el carrito.
+      // Así mesaOrder ya existe cuando el carrito queda vacío y el historial
+      // de consumo aparece inmediatamente sin parpadeo ni pérdida de datos.
+      await onOrdersChanged();
+      setCart({});
+      setNote("");
+      setDisc(0);
+      setSplit(1);
+      setActivePromo(null);
+      setSent(true);
+      setTimeout(() => setSent(false), 2000);
+    } catch (e) {
+      alert("Error: " + e.message);
+    } finally {
+      setSending(false);
+    }
   };
 
   return (

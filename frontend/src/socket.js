@@ -7,9 +7,6 @@ let currentBusinessId = null;
 
 export function connectSocket(businessId) {
   // Si ya hay un socket conectado para este negocio, lo devuelve tal cual.
-  // Esto es crítico: App.jsx llama connectSocket cada vez que el useEffect
-  // corre (re-renders, StrictMode, etc.), y no queremos crear un socket
-  // nuevo cada vez.
   if (socket && socket.connected && currentBusinessId === businessId) {
     return socket;
   }
@@ -31,13 +28,21 @@ export function connectSocket(businessId) {
     timeout: 10000,
   });
 
-  // join_business se emite desde aquí en cada conexión/reconexión.
-  // Los listeners de negocio (orders_updated, etc.) los registra App.jsx
-  // sobre el mismo objeto socket que retornamos.
+  // FIX: si el socket ya está conectado cuando se llama connectSocket
+  // (ej. el barman abre sesión después de que el socket se estableció),
+  // el evento "connect" no vuelve a dispararse y join_business nunca se
+  // emitía — por eso el barman no recibía orders_updated.
+  // Solución: emitir join_business inmediatamente si ya está conectado,
+  // además de registrar el listener para futuras reconexiones.
   socket.on("connect", () => {
     console.log("[socket] conectado, room:", businessId);
     socket.emit("join_business", businessId);
   });
+
+  if (socket.connected) {
+    console.log("[socket] ya conectado, emitiendo join_business:", businessId);
+    socket.emit("join_business", businessId);
+  }
 
   socket.on("connect_error", (err) => {
     console.warn("[socket] error:", err.message);

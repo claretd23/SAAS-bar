@@ -24,9 +24,6 @@ const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
 const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
 
 export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
-  // Persiste el tab activo en sessionStorage (no localStorage) para que
-  // sea propio de ESTA pestana/sesion -- si el navegador tiene otra
-  // pestana con otra cuenta de admin, no se pisan el tab entre si.
   const [tab, setTab] = useState(() => sessionStorage.getItem("adminTab") || "dashboard");
   const [dashboard, setDashboard] = useState(null);
 
@@ -35,8 +32,6 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
     sessionStorage.setItem("adminTab", id);
   };
 
-  // Se recarga automáticamente cuando llegan eventos de socket (orders
-  // cambia como prop reactivo desde App.jsx, que escucha orders_updated).
   useEffect(() => {
     if (tab === "dashboard") {
       api.getDashboard().then(setDashboard).catch(() => {});
@@ -339,9 +334,32 @@ function MenuTab({ products, onChanged }) {
     try { await api.deleteProduct(id); onChanged(); } catch (e) { alert(e.message); }
   };
 
-  const filtered = search
-    ? products.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
-    : null;
+  // FIX: separamos los dos casos de render explícitamente.
+  // Antes, `filtered || groups` pasaba el array plano al mismo .map()
+  // que esperaba objetos {cat, items}, causando que group.items fuera
+  // undefined y el listado de búsqueda quedara completamente vacío.
+  const renderProducts = () => {
+    if (search) {
+      const filtered = products.filter(p =>
+        p.name.toLowerCase().includes(search.toLowerCase())
+      );
+      if (!filtered.length) return (
+        <div style={{ textAlign: "center", color: C.muted, marginTop: 20 }}>Sin resultados</div>
+      );
+      return filtered.map(p => <ProductRow key={p.id} p={p} onEdit={() => open(p)} onDelete={() => del(p.id)} />);
+    }
+
+    return cats.map(cat => {
+      const items = products.filter(p => p.cat === cat);
+      if (!items.length) return null;
+      return (
+        <div key={cat} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
+          {items.map(p => <ProductRow key={p.id} p={p} onEdit={() => open(p)} onDelete={() => del(p.id)} />)}
+        </div>
+      );
+    });
+  };
 
   return (
     <div className="fade-in">
@@ -352,34 +370,7 @@ function MenuTab({ products, onChanged }) {
 
       <SearchInput value={search} onChange={e => setSearch(e.target.value)} placeholder="Buscar producto..." />
 
-      {(filtered || cats.map(cat => ({ cat, items: products.filter(p => p.cat === cat) }))).map((group, gi) => {
-        const items = filtered ? filtered : group.items;
-        const label = filtered ? null : group.cat;
-        if (!items.length) return null;
-        return (
-          <div key={gi} style={{ marginBottom: 14 }}>
-            {label && <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{label}</div>}
-            {items.map(p => (
-              <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
-                {p.image_url
-                  ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
-                  : <div style={{ width: 36, height: 36, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      <Icon name="drink" size={18} color={C.muted} />
-                    </div>
-                }
-                <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
-                <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.price)}</span>
-                {p.unlimited_stock
-                  ? <Badge color={C.neon2}><Icon name="infinity" size={11} /></Badge>
-                  : <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock}</Badge>
-                }
-                <Btn size="sm" variant="ghost" onClick={() => open(p)}><Icon name="edit" size={13} /></Btn>
-                <Btn size="sm" variant="ghost" onClick={() => del(p.id)}><Icon name="trash" size={13} color={C.red} /></Btn>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+      {renderProducts()}
 
       {modal && (
         <Modal title={modal === "new" ? "Nuevo producto" : "Editar producto"} onClose={() => setModal(null)}>
@@ -405,7 +396,6 @@ function MenuTab({ products, onChanged }) {
           <Input label="Categoría" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cócteles" />
           <Input label="Precio" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
 
-          {/* Toggle de stock ilimitado */}
           <div style={{ marginBottom: 12 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 10, cursor: "pointer" }}>
               <div onClick={() => setForm(f => ({ ...f, unlimited_stock: !f.unlimited_stock }))} style={{
@@ -429,6 +419,28 @@ function MenuTab({ products, onChanged }) {
           </div>
         </Modal>
       )}
+    </div>
+  );
+}
+
+// Extraído para no repetir JSX en los dos paths del render
+function ProductRow({ p, onEdit, onDelete }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
+      {p.image_url
+        ? <img src={`${API_URL}${p.image_url}`} alt={p.name} style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }} />
+        : <div style={{ width: 36, height: 36, borderRadius: 8, background: C.bg4, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+            <Icon name="drink" size={18} color={C.muted} />
+          </div>
+      }
+      <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+      <span style={{ color: C.neon, fontSize: 13 }}>{fmt(p.price)}</span>
+      {p.unlimited_stock
+        ? <Badge color={C.neon2}><Icon name="infinity" size={11} /></Badge>
+        : <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock}</Badge>
+      }
+      <Btn size="sm" variant="ghost" onClick={onEdit}><Icon name="edit" size={13} /></Btn>
+      <Btn size="sm" variant="ghost" onClick={onDelete}><Icon name="trash" size={13} color={C.red} /></Btn>
     </div>
   );
 }
@@ -547,7 +559,6 @@ function InventoryTab({ products, onChanged }) {
             }
             <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
 
-            {/* Toggle de ilimitado */}
             <button onClick={() => toggleUnlimited(p)} disabled={toggling === p.id} title="Stock ilimitado" style={{
               width: 32, height: 20, borderRadius: 10,
               background: p.unlimited_stock ? C.neon2 : C.bg4,
@@ -627,7 +638,8 @@ function UsersTab({ businessId }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 500, fontSize: 13 }}>{u.name}</div>
-              <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
+              {/* PIN enmascarado: visible solo si el admin lo necesita explícitamente */}
+              <div style={{ fontSize: 11, color: C.muted }}>PIN: ••••</div>
             </div>
             <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
             <Btn size="sm" variant="ghost" onClick={() => remove(u)}><Icon name="trash" size={13} color={C.red} /></Btn>

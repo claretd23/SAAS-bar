@@ -20,7 +20,6 @@ export default function App() {
   const [promos, setPromos] = useState([]);
   const [orders, setOrders] = useState([]);
   const [ready, setReady] = useState(false);
-  // useRef para guardar el businessId activo sin que cambie entre renders
   const businessIdRef = useRef(null);
 
   const loadData = useCallback(async () => {
@@ -49,24 +48,16 @@ export default function App() {
       return;
     }
 
-    // Si ya tenemos un socket activo para este mismo negocio, no lo
-    // reconectamos — solo agregamos/actualizamos los listeners.
     const socket = connectSocket(user.businessId);
     businessIdRef.current = user.businessId;
 
-    // Carga inicial de datos
     loadData();
 
-    // Limpia listeners previos ANTES de registrar nuevos.
-    // Esto evita que se acumulen si React re-ejecuta el effect.
     socket.off("connect");
     socket.off("orders_updated");
     socket.off("products_updated");
 
     socket.on("connect", () => {
-      // Al reconectar (ej. el WiFi se cortó un momento), volvemos a pedir
-      // datos completos para no perdernos eventos que llegaron mientras
-      // el socket estuvo caído.
       if (businessIdRef.current) loadData();
     });
 
@@ -77,11 +68,6 @@ export default function App() {
     socket.on("products_updated", () => {
       api.getProducts().then(setProducts).catch(() => {});
     });
-
-    // SIN cleanup de socket aquí. React StrictMode en desarrollo hace
-    // mount → cleanup → mount inmediatamente, lo que destruiría el socket
-    // antes de que pueda recibir eventos. El socket solo se desconecta
-    // en logout explícito (handleLogout) o al cerrar la pestaña.
   }, [user, loadData]);
 
   const handleLogin = (u) => setUser(u);
@@ -141,9 +127,13 @@ function BusinessApp({ user, isSuperAdmin, products, promos, orders, setProducts
     products,
     promos,
     orders,
-    onOrdersChanged: () => api.getOrders().then(setOrders),
+    // FIX: todas las callbacks de "changed" retornan la Promise de la API.
+    // Esto permite que MeseroView haga `await onOrdersChanged()` antes de
+    // limpiar el carrito, garantizando que el historial de consumo aparece
+    // inmediatamente después de enviar la orden, sin parpadeo ni pérdida.
+    onOrdersChanged:   () => api.getOrders().then(setOrders),
     onProductsChanged: () => api.getProducts().then(setProducts),
-    onPromosChanged: () => api.getPromos().then(setPromos),
+    onPromosChanged:   () => api.getPromos().then(setPromos),
     onLogout: handleLogout,
   };
 

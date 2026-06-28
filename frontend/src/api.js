@@ -38,7 +38,7 @@ async function requestForm(path, { method = "POST", data } = {}) {
     method,
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      // ⚠️ NO pongas Content-Type aquí — el browser lo agrega con el boundary correcto
+    
     },
     body: form,
   });

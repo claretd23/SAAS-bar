@@ -53,7 +53,10 @@ export default function App() {
 
     loadData();
 
-    socket.off("connect");
+    // NOTA: NO usar socket.off("connect") aquí — eso borraría el listener
+    // que connectSocket() registra internamente para emitir join_business,
+    // incluso en reconexiones automáticas, dejando al cliente fuera de su
+    // room tras cualquier corte de red.
     socket.off("orders_updated");
     socket.off("products_updated");
 

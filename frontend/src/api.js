@@ -24,7 +24,7 @@ async function request(path, { method = "GET", body } = {}) {
     throw new Error(err.error || "Error desconocido");
   }
   return res.json();
-}
+} 
 
 // Petición con FormData (para subir imágenes — NO pone Content-Type, el browser lo hace solo)
 async function requestForm(path, { method = "POST", data } = {}) {
@@ -88,6 +88,28 @@ export const api = {
     request(`/orders/${orderId}/items/${itemIndex}/status`, { method: "PATCH", body: { status } }),
   payOrderItems: (orderId, pay, itemIndexes) =>
     request(`/orders/${orderId}/payments`, { method: "POST", body: { pay, itemIndexes } }),
+// Órdenes
+getOrders: () => request("/orders"),
+createOrder: (data) => request("/orders", { method: "POST", body: data }),
+updateItemStatus: (orderId, itemIndex, status) =>
+  request(`/orders/${orderId}/items/${itemIndex}/status`, {
+    method: "PATCH",
+    body: { status },
+  }),
+
+payOrderItems: (orderId, pay, itemIndexes) =>
+  request(`/orders/${orderId}/payments`, {
+    method: "POST",
+    body: { pay, itemIndexes },
+  }),
+
+requestPayment: (orderId) =>
+  request(`/orders/${orderId}/request-payment`, {
+    method: "PATCH",
+  }),
+
+
+
 
   // Reportes
   getDashboard: () => request("/reports/dashboard"),

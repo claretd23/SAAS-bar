@@ -24,7 +24,6 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
   const [activePromo, setActivePromo] = useState(null);
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
-  const [closeModal, setCloseModal] = useState(false);
 
   const MESAS = Array.from({ length: mesaCount }, (_, i) => i + 1);
   const activePromos = promos.filter(p => p.active);
@@ -290,110 +289,66 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
               </div>
             )}
 
-            {sent
-              ? <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: 9, textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500, marginBottom: 8, display: "flex", gap: 6, justifyContent: "center", alignItems: "center" }}>
-                  <Icon name="check" size={14} color={C.neon} /> Enviado a barra
-                </div>
-              : <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
-                  {sending ? "Enviando..." : "Enviar a barra"}
-                </Btn>
-            }
-            {mesaOrder && (
-              <Btn variant="amber" onClick={() => setCloseModal(true)} style={{ width: "100%", fontSize: 13, display: "flex", gap: 6, justifyContent: "center" }}>
-                <Icon name="cash" size={14} color="#000" /> Cobrar cuenta
-              </Btn>
-            )}
+            {sent ? (
+  <div
+    style={{
+      background: C.neon + "22",
+      border: `1px solid ${C.neon}`,
+      borderRadius: 8,
+      padding: 9,
+      textAlign: "center",
+      color: C.neon,
+      fontSize: 13,
+      fontWeight: 500,
+      marginBottom: 8,
+      display: "flex",
+      gap: 6,
+      justifyContent: "center",
+      alignItems: "center",
+    }}
+  >
+    <Icon name="check" size={14} color={C.neon} />
+    {cartItems.length
+      ? "Orden enviada"
+      : "Cuenta enviada a barra"}
+  </div>
+) : cartItems.length ? (
+  <Btn
+    variant="primary"
+    onClick={sendOrder}
+    disabled={sending}
+    style={{ width: "100%", fontSize: 14, marginBottom: 8 }}
+  >
+    {sending ? "Enviando..." : "Enviar orden"}
+  </Btn>
+) : mesaOrder ? (
+  <Btn
+    variant="amber"
+    disabled={mesaOrder.payment_requested}
+    onClick={async () => {
+      try {
+        await api.requestPayment(mesaOrder.id);
+        await onOrdersChanged();
+        setSent(true);
+        setTimeout(() => setSent(false), 2000);
+      } catch (e) {
+        alert(e.message);
+      }
+    }}
+    style={{ width: "100%", fontSize: 14, marginBottom: 8 }}
+  >
+    {mesaOrder.payment_requested
+      ? "Cuenta enviada"
+      : "Enviar cuenta a barra"}
+  </Btn>
+) : (
+  <Btn disabled style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
+    Sin productos
+  </Btn>
+)}
           </div>
         </div>
       </div>
-
-      {closeModal && mesaOrder && (
-        <PayModal order={mesaOrder} onClose={() => setCloseModal(false)} onPaid={() => { setCloseModal(false); onOrdersChanged(); }} />
-      )}
     </div>
-  );
-}
-
-function PayModal({ order, onClose, onPaid }) {
-  const pendingIdx = order.items.map((it, i) => ({ it, i })).filter(x => !x.it.paid).map(x => x.i);
-  const [selected, setSelected] = useState(new Set(pendingIdx));
-  const [pay, setPay] = useState("ef");
-  const [cash, setCash] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const toggle = (idx) => setSelected(s => { const n = new Set(s); n.has(idx) ? n.delete(idx) : n.add(idx); return n; });
-  const selectedTotal = [...selected].reduce((s, idx) => s + order.items[idx].price * order.items[idx].qty, 0);
-  const cashNum = parseFloat(cash) || 0;
-  const change = cashNum > 0 ? cashNum - selectedTotal : null;
-
-  const confirmPay = async () => {
-    if (!selected.size) { setError("Selecciona al menos un producto"); return; }
-    if (pay === "ef" && cashNum > 0 && cashNum < selectedTotal) { setError("El monto no alcanza"); return; }
-    setSaving(true); setError("");
-    try { await api.payOrderItems(order.id, pay, [...selected]); onPaid(); }
-    catch (e) { setError(e.message); } finally { setSaving(false); }
-  };
-
-  return (
-    <Modal title={`Cobrar Mesa ${order.mesa}`} onClose={onClose}>
-      {error && <div style={{ color: C.red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
-      <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>Selecciona qué se paga ahora.</div>
-      <div style={{ maxHeight: 200, overflowY: "auto", marginBottom: 10 }}>
-        {order.items.map((item, idx) => (
-          <label key={idx} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${C.border}`, opacity: item.paid ? 0.4 : 1, cursor: item.paid ? "default" : "pointer" }}>
-            <input type="checkbox" checked={item.paid || selected.has(idx)} disabled={item.paid} onChange={() => toggle(idx)} />
-            <span style={{ flex: 1, fontSize: 12 }}>{item.qty}x {item.name}{item.paid && <span style={{ color: C.neon, fontSize: 10 }}> (pagado)</span>}</span>
-            <span style={{ fontSize: 12, color: C.neon }}>{fmt(item.price * item.qty)}</span>
-          </label>
-        ))}
-      </div>
-      <div style={{ display: "flex", gap: 6, marginBottom: pay === "ef" ? 8 : 12 }}>
-        {PAY_METHODS.map(m => (
-          <button key={m.id} onClick={() => { setPay(m.id); setCash(""); }} style={{
-            flex: 1, padding: "8px 4px", borderRadius: 8, fontSize: 11, cursor: "pointer",
-            background: pay === m.id ? C.neon2 + "22" : "transparent",
-            border: `1px solid ${pay === m.id ? C.neon2 : C.border}`,
-            color: pay === m.id ? C.neon2 : C.muted,
-            display: "flex", flexDirection: "column", alignItems: "center", gap: 4,
-          }}>
-            <Icon name={m.icon} size={16} color={pay === m.id ? C.neon2 : C.muted} />
-            {m.label}
-          </button>
-        ))}
-      </div>
-      {pay === "ef" && (
-        <div style={{ background: C.bg3, borderRadius: 8, padding: "10px 12px", marginBottom: 12 }}>
-          <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Monto recibido</div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
-            {[50, 100, 200, 500, 1000].map(d => (
-              <button key={d} onClick={() => setCash(String(d))} style={{
-                padding: "4px 10px", borderRadius: 8, fontSize: 12,
-                background: cash === String(d) ? C.neon + "22" : C.bg4,
-                border: `1px solid ${cash === String(d) ? C.neon : C.border}`,
-                color: cash === String(d) ? C.neon : C.muted, cursor: "pointer",
-              }}>${d}</button>
-            ))}
-          </div>
-          <input type="number" min="0" value={cash} onChange={e => setCash(e.target.value)} placeholder="Otro monto..."
-            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border2}`, borderRadius: 8, color: C.text, padding: "7px 10px", fontSize: 13, boxSizing: "border-box" }} />
-          {change !== null && change >= 0 && (
-            <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: C.muted }}>Cambio</span>
-              <span style={{ fontSize: 20, fontWeight: 700, color: C.neon }}>{fmt(change)}</span>
-            </div>
-          )}
-          {change !== null && change < 0 && <div style={{ marginTop: 8, fontSize: 12, color: C.red }}>Faltan {fmt(Math.abs(change))}</div>}
-        </div>
-      )}
-      <Divider />
-      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 15, fontWeight: 600, marginBottom: 14 }}>
-        <span>Total</span><span style={{ color: C.neon }}>{fmt(selectedTotal)}</span>
-      </div>
-      <div style={{ display: "flex", gap: 8 }}>
-        <Btn variant="ghost" onClick={onClose} style={{ flex: 1 }}>Cancelar</Btn>
-        <Btn variant="primary" onClick={confirmPay} disabled={saving} style={{ flex: 1 }}>{saving ? "Cobrando..." : "Confirmar"}</Btn>
-      </div>
-    </Modal>
   );
 }

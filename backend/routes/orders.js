@@ -102,7 +102,7 @@ router.patch("/:id/items/:itemIndex/status", requireRole("barman", "admin", "sup
 // pago (para que alguien pueda pagar solo lo que consumió). Si después del
 // pago ya no queda nada sin pagar, la orden se cierra automáticamente
 // (is_closed = 1) y AHÍ se descuenta el stock — no antes.
-router.post("/:id/payments", requireRole("mesero", "barman", "admin", "superadmin"), (req, res) => {
+router.post("/:id/payments", requireRole( "barman", "admin", "superadmin"), (req, res) => {
   const { pay, itemIndexes } = req.body;
   if (!pay) return res.status(400).json({ error: "Falta método de pago" });
   if (!itemIndexes?.length) return res.status(400).json({ error: "Selecciona qué se está pagando" });

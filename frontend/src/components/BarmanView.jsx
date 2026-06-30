@@ -40,9 +40,13 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
     preparando: rows.filter(r => r.item.status === "preparando").length,
     listo: rows.filter(r => r.item.status === "listo").length,
   };
-  const barraOrders = orders.filter(o => !o.is_closed && isBarra(o.mesa));
+// Solo para el cobro
+const openOrders = orders.filter(o => !o.is_closed);
 
-  const advance = async (row) => {
+// Solo para preparar bebidas de barra
+const barraOrders = orders.filter(o => !o.is_closed && isBarra(o.mesa));
+  
+const advance = async (row) => {
     const next = STATUS_FLOW[STATUS_FLOW.indexOf(row.item.status) + 1];
     if (!next) return;
     try { await api.updateItemStatus(row.orderId, row.itemIndex, next); onOrdersChanged(); }
@@ -64,22 +68,27 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
           <Btn size="sm" variant="purple" onClick={() => setBarraModal(true)}>
             <Icon name="plus" size={13} /> Consumo en barra
           </Btn>
-          {barraOrders.length > 0 && (
-            <Btn size="sm" variant="amber" onClick={() => setPayModal(barraOrders[0])}>
-              <Icon name="cash" size={13} color="#000" /> Cobrar barra
+          {openOrders.length > 0 && (
+            <Btn
+              size="sm"
+              variant="amber"
+              onClick={() => setPayModal(openOrders[0])}
+            >
+              <Icon name="cash" size={13} color="#000" />
+              Cobrar cuentas
             </Btn>
           )}
           <Btn size="sm" variant="ghost" onClick={onLogout}>Salir</Btn>
         </div>
       </div>
 
-      {barraOrders.length > 1 && (
+      {openOrders.length > 1 && (
         <div style={{ display: "flex", gap: 6, padding: "6px 12px", background: C.bg3, borderBottom: `1px solid ${C.border}`, overflowX: "auto" }}>
-          {barraOrders.map(o => (
+            {openOrders.map(o => (
             <button key={o.id} onClick={() => setPayModal(o)} style={{
               padding: "4px 12px", borderRadius: 16, fontSize: 11, cursor: "pointer",
               background: C.amber + "22", border: `1px solid ${C.amber}`, color: C.amber,
-            }}>{o.mesa} — {fmt(o.total)}</button>
+            }}>{isBarra(o.mesa) ? `Barra ${o.mesa}` : `Mesa ${o.mesa}`} — {fmt(o.total)}</button>
           ))}
         </div>
       )}
@@ -142,10 +151,21 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
       </div>
 
       {barraModal && <BarraOrderModal products={products} orders={orders} onClose={() => setBarraModal(false)} onSent={() => { setBarraModal(false); onOrdersChanged(); }} />}
-      {payModal && <PayModal order={payModal} allBarraOrders={barraOrders} onSelectOrder={setPayModal} onClose={() => setPayModal(null)} onPaid={() => { setPayModal(null); onOrdersChanged(); }} />}
-    </div>
+      {payModal && (
+        <PayModal
+          order={payModal}
+          allBarraOrders={openOrders}
+          onSelectOrder={setPayModal}
+          onClose={() => setPayModal(null)}
+          onPaid={() => {
+            setPayModal(null);
+            onOrdersChanged();
+          }}
+        />
+)}  
+  </div>
   );
-}
+} 
 
 function BarraOrderModal({ products, orders, onClose, onSent }) {
   const [barra, setBarra] = useState(BARRAS[0]);
@@ -273,8 +293,15 @@ function PayModal({ order, allBarraOrders, onSelectOrder, onClose, onPaid }) {
   };
 
   return (
-    <Modal title={`Cobrar barra ${order.mesa}`} onClose={onClose}>
-      {allBarraOrders.length > 1 && (
+          <Modal
+            title={
+              isBarra(order.mesa)
+                ? `Cobrar barra ${order.mesa}`
+                : `Cobrar mesa ${order.mesa}`
+            }
+            onClose={onClose}
+          >      
+          {allBarraOrders.length > 1 && (
         <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
           {allBarraOrders.map(o => (
             <button key={o.id} onClick={() => onSelectOrder(o)} style={{

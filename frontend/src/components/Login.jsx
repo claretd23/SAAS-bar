@@ -46,13 +46,13 @@ export default function Login({ onLogin }) {
     <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, background: C.bg }}>
       <div style={{ marginBottom: 32, textAlign: "center" }}>
         <div style={{ fontSize: 40, marginBottom: 8 }}>🍹</div>
-        <div style={{ fontSize: 24, fontWeight: 600, color: C.neon, letterSpacing: 2 }}>BAR POS</div>
+        <div style={{ fontSize: 24, fontWeight: 600, color: C.neon, letterSpacing: 2 }}>MICHELOTA</div>
       </div>
 
       {step === "business" && (
         <div style={{ width: "100%", maxWidth: 320 }}>
           <div style={{ fontSize: 12, color: C.muted, textAlign: "center", marginBottom: 16 }}>
-            Ingresa el ID de tu negocio (te lo dio tu proveedor)
+            Ingresa el ID de tu negocio 
           </div>
           <ErrorBanner message={error} />
           <Input placeholder="ej. ax7k29dlmz" value={businessId} onChange={e => setBusinessId(e.target.value)} onKeyDown={e => e.key === "Enter" && confirmBusiness()} />

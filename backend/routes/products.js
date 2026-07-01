@@ -93,7 +93,7 @@ router.post(
   requireRole("admin", "superadmin"),
   uploadImage,
   (req, res) => {
-    const { name, cat, price, stock, emoji } = req.body;
+    const { name, cat, price, stock} = req.body;
     if (!name || !cat || price == null) {
       if (req.file) fs.unlinkSync(req.file.path);
       return res.status(400).json({ error: "name, cat y price son obligatorios" });
@@ -103,8 +103,8 @@ router.post(
     const imgUrl = filename ? `/uploads/${filename}` : null;
 
     db.prepare(
-      "INSERT INTO products (id, business_id, name, cat, price, stock, emoji, image_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
-    ).run(id, req.user.businessId, name, cat, +price, +stock || 0, emoji || "🍹", imgUrl);
+  "INSERT INTO products (id, business_id, name, cat, price, stock, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)"
+).run(id, req.user.businessId, name, cat, +price, +stock || 0, imgUrl);
 
     const product = db.prepare("SELECT * FROM products WHERE id = ?").get(id);
     req.app.get("io").to(req.user.businessId).emit("products_updated");
@@ -126,7 +126,7 @@ router.put(
       return res.status(404).json({ error: "Producto no encontrado" });
     }
 
-    const { name, cat, price, stock, emoji, remove_image } = req.body;
+    const { name, cat, price, stock, remove_image } = req.body;
 
     let imgUrl = existing.image_url;
 
@@ -141,13 +141,12 @@ router.put(
     }
 
     db.prepare(
-      "UPDATE products SET name=?, cat=?, price=?, stock=?, emoji=?, image_url=? WHERE id=?"
+      "UPDATE products SET name=?, cat=?, price=?, stock=?, image_url=? WHERE id=?"
     ).run(
       name ?? existing.name,
       cat ?? existing.cat,
       price != null ? +price : existing.price,
       stock != null ? +stock : existing.stock,
-      emoji ?? existing.emoji,
       imgUrl,
       req.params.id
     );

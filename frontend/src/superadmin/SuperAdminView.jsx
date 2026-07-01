@@ -185,7 +185,6 @@ export default function SuperAdminView({ onLogout }) {
           {users.map(u => (
             <div key={u.id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: `1px solid ${C.border}`, fontSize: 13 }}>
               <span>{u.name} <span style={{ color: C.muted, fontSize: 11 }}>({u.role})</span></span>
-              <span style={{ color: C.neon, fontFamily: "monospace" }}>PIN: {u.pin}</span>
             </div>
           ))}
           <div style={{ marginTop: 14, fontSize: 12, color: C.muted, marginBottom: 8 }}>Agregar usuario</div>

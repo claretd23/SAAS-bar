@@ -86,7 +86,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
       <div style={{ flex: 1, overflowY: "auto", padding: 12 }}>
         {!filtered.length && (
           <div style={{ textAlign: "center", color: C.muted, marginTop: 60, fontSize: 13 }}>
-            🎉 Sin productos pendientes
+            Sin ordenes pendientes
           </div>
         )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
@@ -132,7 +132,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
                 </Btn>
               ) : (
                 <div style={{ textAlign: "center", fontSize: 11, color: C.neon }}>
-                  ✓ Listo para servir — pendiente de cobro
+                  Listo para servir — pendiente de cobro
                 </div>
               )}
             </div>

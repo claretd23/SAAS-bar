@@ -1,3 +1,4 @@
+import bcrypt from "bcryptjs";
 import Database from "better-sqlite3";
 import { fileURLToPath } from "url";
 import path from "path";
@@ -186,3 +187,15 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
 }
 
 export default db;
+
+const plainPinUsers = db.prepare("SELECT id, pin FROM users").all()
+  .filter(u => !/^\$2[aby]\$/.test(u.pin));
+
+if (plainPinUsers.length > 0) {
+  const updatePin = db.prepare("UPDATE users SET pin = ? WHERE id = ?");
+  for (const u of plainPinUsers) {
+    const hashed = bcrypt.hashSync(u.pin, 10);
+    updatePin.run(hashed, u.id);
+  }
+  console.log(`Migracion: ${plainPinUsers.length} PIN(s) hasheados con bcrypt`);
+}

@@ -15,11 +15,20 @@ import reportRoutes from "./routes/reports.js";
 
 dotenv.config();
 
+const requiredEnvVars = ["JWT_SECRET", "SUPERADMIN_PASSWORD"  ];
+const missingEnvVars = requiredEnvVars.filter(name => !process.env[name]);
+if (missingEnvVars.length > 0) {
+  console.error(`Faltan variables de entorno requeridas: ${missingEnvVars.join(", ")}`);
+  console.error("Crea un archivo .env en backend/ basado en .env.example");
+  process.exit(1);
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const app = express();
 
-app.use(cors());
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+app.use(cors({ origin: FRONTEND_URL }));
 
 // Sirve las imagenes subidas como archivos estaticos
 app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
@@ -28,7 +37,7 @@ app.use("/uploads", express.static(path.join(__dirname, "../uploads")));
 app.use(express.json());
 
 const httpServer = createServer(app);
-const io = new Server(httpServer, { cors: { origin: "*" } });
+const io = new Server(httpServer, { cors: { origin: FRONTEND_URL } });
 
 io.on("connection", (socket) => {
   socket.on("join_business", (businessId) => {
@@ -49,6 +58,17 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/businesses", businessRoutes);
 app.use("/api/reports", reportRoutes);
 
+app.use("/api", (req, res) => {
+  res.status(404).json({ error: "Ruta no encontrada" });
+});
+
+app.use((err, req, res, next) => {
+  console.error(err);
+  if (res.headersSent) return next(err);
+  res.status(err.status || 500).json({
+    error: process.env.NODE_ENV === "production" ? "Error interno del servidor" : err.message,
+  });
+});
 app.get("/api/health", (req, res) => res.json({ ok: true }));
 
 const PORT = process.env.PORT || 4000;

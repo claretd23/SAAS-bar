@@ -4,12 +4,12 @@ import { api } from "../api.js";
 import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.jsx";
 
 const TABS = [
-  { id: "dashboard", label: "📊 Dashboard" },
-  { id: "orders", label: "🧾 Mesas" },
-  { id: "menu", label: "🍹 Menú" },
-  { id: "promos", label: "🏷️ Promos" },
-  { id: "inventory", label: "📦 Inventario" },
-  { id: "users", label: "👥 Usuarios" },
+  { id: "dashboard", label: " Dashboard" },
+  { id: "orders", label: " Mesas" },
+  { id: "menu", label: " Menú" },
+  { id: "promos", label: " Promociones" },
+  { id: "inventory", label: " Inventario" },
+  { id: "users", label: " Usuarios" },
 ];
 
 export default function AdminView({ user, products, promos, orders, onOrdersChanged, onProductsChanged, onPromosChanged, onLogout }) {
@@ -30,7 +30,6 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
           <span style={{ fontSize: 20 }}>📊</span>
           <div>
             <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>ADMIN</div>
-            <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
           </div>
         </div>
         <Btn size="sm" variant="ghost" onClick={onLogout}>Salir</Btn>
@@ -585,8 +584,6 @@ function UsersTab({ businessId }) {
   return (
     <div className="fade-in">
       <div style={{ fontSize: 11, color: C.muted, marginBottom: 12 }}>
-        Cada mesero/barman con su propio PIN queda registrado en cada orden y pago que haga —
-        así sabes quién atendió cada mesa y quién cobró cada cuenta.
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
         <div style={{ fontSize: 13, fontWeight: 500 }}>{users.length} usuarios</div>
@@ -623,7 +620,7 @@ function UsersTab({ businessId }) {
             </div>
           </div>
           <Input
-            label="PIN (4-6 dígitos, único en este negocio)"
+            label="PIN (4-6 dígitos)"
             value={form.pin}
             onChange={e => setForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, "") }))}
             placeholder="ej. 4521"

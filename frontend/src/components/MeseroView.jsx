@@ -80,7 +80,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
       {/* ── Header ── */}
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 20 }}>🧑‍🍳</span>
+          <span style={{ fontSize: 20 }}></span>
           <div>
             <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>{user.name?.toUpperCase() || "MESERO"}</div>
             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
@@ -211,7 +211,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
         {/* ── Panel de orden ── */}
         <div style={{ width: 280, background: C.bg2, borderLeft: `1px solid ${C.border}`, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontWeight: 500, fontSize: 13 }}>🧾 Nueva ronda — Mesa {mesa}</span>
+            <span style={{ fontWeight: 500, fontSize: 13 }}> Mesa {mesa}</span>
             <Btn size="sm" variant="ghost" onClick={() => setCart({})}>Limpiar</Btn>
           </div>
 
@@ -298,7 +298,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
 
             {sent ? (
               <div style={{ background: C.neon + "22", border: `1px solid ${C.neon}`, borderRadius: 8, padding: "9px", textAlign: "center", color: C.neon, fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
-                ✓ Enviado a barra
+                Enviado a barra
               </div>
             ) : (
               <Btn variant="primary" onClick={sendOrder} disabled={!cartItems.length || sending} style={{ width: "100%", fontSize: 14, marginBottom: 8 }}>
@@ -370,7 +370,7 @@ function CloseAccountModal({ order, onClose, onPaid }) {
         </div>
       )}
       <div style={{ fontSize: 11, color: C.muted, marginBottom: 8 }}>
-        Selecciona qué se va a pagar ahora. Si alguien se va antes, desmarca lo que no es suyo.
+        Seleccionar que se va a pagar ahora
       </div>
       <div style={{ maxHeight: 220, overflowY: "auto", marginBottom: 10 }}>
         {order.items.map((item, idx) => (

@@ -4,9 +4,9 @@ import { api, saveSession } from "../api.js";
 import { Btn, Card, Input, ErrorBanner } from "./Common.jsx";
 
 const ROLES = [
-  { id: "mesero", label: "Mesero", icon: "🧑‍🍳", desc: "Tomar órdenes en mesa" },
-  { id: "barman", label: "Barman", icon: "🍸", desc: "Ver y preparar órdenes" },
-  { id: "admin", label: "Administrador", icon: "📊", desc: "Panel completo" },
+  { id: "mesero", label: "Mesero", desc: "Tomar órdenes en mesa" },
+  { id: "barman", label: "Barman", desc: "Ver y preparar órdenes" },
+  { id: "admin", label: "Administrador", desc: "Panel completo" },
 ];
 
 export default function Login({ onLogin }) {

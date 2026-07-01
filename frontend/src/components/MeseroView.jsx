@@ -134,7 +134,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
                 background: activePromo?.id === p.id ? C.amber + "22" : "transparent",
                 border: `1px solid ${activePromo?.id === p.id ? C.amber : C.border}`,
                 color: activePromo?.id === p.id ? C.amber : C.muted, fontSize: 12, cursor: "pointer",
-              }}>{p.emoji} {p.name}</button>
+              }}>{p.name}</button>
             ))}
           </div>
 
@@ -175,7 +175,6 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
                       height: 70, display: "flex", alignItems: "center",
                       justifyContent: "center", fontSize: 30, background: C.bg4,
                     }}>
-                      {p.emoji}
                     </div>
                   )}
 
@@ -236,9 +235,7 @@ export default function MeseroView({ user, products, promos, orders, onOrdersCha
                     alt={item.name}
                     style={{ width: 28, height: 28, borderRadius: 6, objectFit: "cover", flexShrink: 0 }}
                   />
-                ) : (
-                  <span style={{ fontSize: 16, flexShrink: 0 }}>{item.emoji}</span>
-                )}
+                ) : null}
                 <div style={{ flex: 1, fontSize: 12, lineHeight: 1.3 }}>{item.name}</div>
                 <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
                   <button onClick={(e) => { e.stopPropagation(); removeItem(item.id); }} style={{ width: 20, height: 20, borderRadius: "50%", border: `1px solid ${C.border2}`, background: C.bg4, color: C.text, fontSize: 14, cursor: "pointer", lineHeight: 1 }}>−</button>

@@ -106,9 +106,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
                 {row.item.image_url ? (
                   <img src={`${API_URL}${row.item.image_url}`} alt={row.item.name}
                     style={{ width: 40, height: 40, borderRadius: 8, objectFit: "cover" }} />
-                ) : (
-                  <span style={{ fontSize: 26 }}>{row.item.emoji}</span>
-                )}
+                ) : null}
                 <div>
                   <div style={{ fontWeight: 500, fontSize: 13 }}>{row.item.qty}× {row.item.name}</div>
                   <div style={{ fontSize: 11, color: C.muted }}>{fmt(row.item.price * row.item.qty)}</div>
@@ -226,7 +224,6 @@ function BarraOrderModal({ products, onClose, onSent }) {
               padding: "8px 6px", textAlign: "center", cursor: agotado ? "not-allowed" : "pointer",
               opacity: agotado ? 0.4 : 1,
             }}>
-              <div style={{ fontSize: 20 }}>{p.emoji}</div>
               <div style={{ fontSize: 10, marginTop: 2 }}>{p.name}</div>
               <div style={{ fontSize: 11, color: C.neon }}>{fmt(p.price)}</div>
               {cart[p.id] && <div style={{ fontSize: 10, color: C.amber }}>×{cart[p.id].qty}</div>}

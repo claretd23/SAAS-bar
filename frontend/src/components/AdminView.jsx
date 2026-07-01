@@ -253,7 +253,7 @@ function MenuTab({ products, onChanged }) {
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
   const [modal, setModal] = useState(null);
   const [form, setForm] = useState({
-    name: "", cat: "", price: "", stock: "", emoji: "🍹",
+    name: "", cat: "", price: "", stock: "",
     imageFile: null, previewUrl: null, remove_image: false,
   });
   const [error, setError] = useState("");
@@ -261,11 +261,11 @@ function MenuTab({ products, onChanged }) {
 
   const open = (p = null) => {
     setForm(p ? {
-      name: p.name, cat: p.cat, price: p.price, stock: p.stock, emoji: p.emoji,
+      name: p.name, cat: p.cat, price: p.price, stock: p.stock,
       imageFile: null, previewUrl: p.image_url ? `${API_URL}${p.image_url}` : null,
       remove_image: false,
     } : {
-      name: "", cat: "", price: "", stock: "", emoji: "🍹",
+      name: "", cat: "", price: "", stock: "",
       imageFile: null, previewUrl: null, remove_image: false,
     });
     setModal(p || "new");
@@ -299,7 +299,6 @@ function MenuTab({ products, onChanged }) {
         cat: form.cat,
         price: form.price,
         stock: form.stock || 0,
-        emoji: form.emoji,
         ...(form.imageFile ? { image: form.imageFile } : {}),
         ...(form.remove_image ? { remove_image: "true" } : {}),
       };
@@ -344,7 +343,7 @@ function MenuTab({ products, onChanged }) {
                   style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
                 />
               ) : (
-                <span style={{ fontSize: 24, width: 36, textAlign: "center" }}>{p.emoji}</span>
+                <span style={{ fontSize: 24, width: 36, textAlign: "center" }}></span>
               )}
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
               <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
@@ -392,7 +391,6 @@ function MenuTab({ products, onChanged }) {
             )}
           </div>
 
-          <Input label="Emoji (si no hay imagen)" value={form.emoji} onChange={e => setForm(f => ({ ...f, emoji: e.target.value }))} />
           <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <Input label="Categoría" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cócteles" />
           <Input label="Precio" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />

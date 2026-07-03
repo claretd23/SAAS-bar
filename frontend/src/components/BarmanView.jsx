@@ -55,7 +55,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
 
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 20 }}>🍹</span>
+          <span style={{ fontSize: 20 }}></span>
           <div>
             <div style={{ fontWeight: 600, color: C.neon2, fontSize: 13 }}>{user.name?.toUpperCase() || "BARMAN"}</div>
             <div style={{ fontSize: 11, color: C.muted }}>{today()}</div>
@@ -130,7 +130,7 @@ export default function BarmanView({ user, products, orders, onOrdersChanged, on
                 </Btn>
               ) : (
                 <div style={{ textAlign: "center", fontSize: 11, color: C.neon }}>
-                  Listo para servir — pendiente de cobro
+                  Pendiente de cobro
                 </div>
               )}
             </div>

@@ -185,6 +185,18 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
   const migratedCount = migrateOrders();
   console.log(`Migracion: ${migratedCount} ordenes migradas al nuevo modelo`);
 }
+
+// ============ NUEVO — payment_requested ============
+// El mesero pulsa "Solicitar cobro al barman" y esto se pone en 1. El barman
+// lo ve resaltado en "Cuentas por cobrar". Se vuelve a poner en 0 en cuanto
+// se registra cualquier pago contra esa cuenta.
+const orderColsForPaymentReq = db.prepare("PRAGMA table_info(orders)").all().map(c => c.name);
+if (!orderColsForPaymentReq.includes("payment_requested")) {
+  db.exec("ALTER TABLE orders ADD COLUMN payment_requested INTEGER NOT NULL DEFAULT 0");
+  console.log("Migracion: columna payment_requested agregada a orders");
+}
+// ============ FIN NUEVO ============
+
 const bizCols = db.prepare("PRAGMA table_info(businesses)").all().map(c => c.name);
 if (!bizCols.includes("table_count")) {
   db.exec("ALTER TABLE businesses ADD COLUMN table_count INTEGER NOT NULL DEFAULT 10");

@@ -20,6 +20,7 @@ function handleUnauthorized(status) {
   }
 }
 
+
 async function request(path, { method = "GET", body } = {}) {
   const token = getToken();
   const res = await fetch(`${API_URL}/api${path}`, {
@@ -104,7 +105,8 @@ export const api = {
     request(`/orders/${orderId}/items/${itemIndex}/status`, { method: "PATCH", body: { status } }),
   payOrderItems: (orderId, pay, itemIndexes) =>
     request(`/orders/${orderId}/payments`, { method: "POST", body: { pay, itemIndexes } }),
-
+  requestPayment: (orderId) =>
+    request(`/orders/${orderId}/request-payment`, { method: "PATCH" }),
   // Reportes
   getDashboard: () => request("/reports/dashboard"),
 };

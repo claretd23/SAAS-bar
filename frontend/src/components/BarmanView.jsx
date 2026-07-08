@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { C, fmt, today } from "../styles.js";
 import { api } from "../api.js";
 import { Btn, Badge, Modal, Divider } from "./Common.jsx";
@@ -26,6 +26,32 @@ function flattenItems(orders) {
   return rows.sort((a, b) => STATUS_FLOW.indexOf(a.item.status) - STATUS_FLOW.indexOf(b.item.status));
 }
 
+// Beep de aviso — dos tonos cortos, generados con Web Audio API (no depende
+// de ningun archivo de audio, asi que no hay que subir/servir nada extra).
+function playPaymentBeep() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const tone = (freq, start, dur) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, ctx.currentTime + start);
+      gain.gain.exponentialRampToValueAtTime(0.25, ctx.currentTime + start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + start + dur);
+      osc.connect(gain).connect(ctx.destination);
+      osc.start(ctx.currentTime + start);
+      osc.stop(ctx.currentTime + start + dur);
+    };
+    tone(880, 0, 0.15);
+    tone(1046, 0.18, 0.18);
+  } catch {
+    // Si el navegador bloquea el audio, fallamos en silencio: el toast
+    // persistente sigue siendo aviso suficiente.
+  }
+}
+
 function isBarra(mesa) {
   return String(mesa).startsWith("B");
 }
@@ -38,6 +64,26 @@ export default function BarmanView({ user, products, orders, business, tableCoun
   const [ordenModal, setOrdenModal]   = useState(false);
   const [cobrarOrder, setCobrarOrder] = useState(null);
   const [layoutModal, setLayoutModal] = useState(false);
+  const [payNotifications, setPayNotifications] = useState([]);
+  const prevOrdersRef = useRef(orders);
+
+  // Detecta cuando un mesero solicita cobro (payment_requested pasa de
+  // false a true): suena un beep y agrega un aviso flotante que NO se quita
+  // solo — se queda hasta que se cobre esa cuenta o el barman lo cierre a mano.
+  useEffect(() => {
+    const prev = prevOrdersRef.current;
+    orders.forEach(o => {
+      if (!o.payment_requested) return;
+      const prevOrder = prev.find(p => p.id === o.id);
+      if (!prevOrder || !prevOrder.payment_requested) {
+        const label = isBarra(o.mesa) ? o.mesa : `Mesa ${o.mesa}`;
+        playPaymentBeep();
+        setPayNotifications(n => n.some(x => x.orderId === o.id) ? n : [...n, { orderId: o.id, text: `${label} pidió su cuenta` }]);
+      }
+    });
+    setPayNotifications(n => n.filter(notif => orders.find(o => o.id === notif.orderId)?.payment_requested));
+    prevOrdersRef.current = orders;
+  }, [orders]);
 
   const rows     = flattenItems(orders);
   const filtered = filter === "todas" ? rows : rows.filter(r => r.item.status === filter);
@@ -47,7 +93,9 @@ export default function BarmanView({ user, products, orders, business, tableCoun
     listo:      rows.filter(r => r.item.status === "listo").length,
   };
 
-  const ordenesActivas = orders.filter(o => !o.is_closed && o.items.some(it => !it.paid));
+  const ordenesActivas = orders
+    .filter(o => !o.is_closed && o.items.some(it => !it.paid))
+    .sort((a, b) => (b.payment_requested ? 1 : 0) - (a.payment_requested ? 1 : 0));
 
   const advance = async (row) => {
     const idx  = STATUS_FLOW.indexOf(row.item.status);
@@ -64,6 +112,37 @@ export default function BarmanView({ user, products, orders, business, tableCoun
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg }}>
 
+      {/* Notificaciones de cobro solicitado — persisten hasta que se cobre
+    la cuenta o el barman las cierre a mano con la X. */}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8 }}>
+        {payNotifications.map(n => {
+          const order = orders.find(o => o.id === n.orderId);
+          return (
+            <div key={n.orderId} style={{
+              background: C.amber + "22", border: `1px solid ${C.amber}`,
+              borderRadius: 10, padding: "10px 12px 10px 14px", fontSize: 13, fontWeight: 500,
+              color: C.amber, boxShadow: "0 4px 16px #0006",
+              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
+              width: 200, cursor: order ? "pointer" : "default",
+            }}
+              onClick={() => order && setCobrarOrder(order)}
+            >
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.text}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); setPayNotifications(ns => ns.filter(x => x.orderId !== n.orderId)); }}
+                style={{
+                  background: "none", border: "none", color: C.amber, cursor: "pointer",
+                  fontSize: 15, lineHeight: 1, padding: 0, flexShrink: 0,
+                }}
+                aria-label="Cerrar aviso"
+              >
+                ×
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
       {/* Header */}
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -78,22 +157,28 @@ export default function BarmanView({ user, products, orders, business, tableCoun
         </div>
       </div>
 
-      {/* Cuentas por cobrar */}
+{/* Cuentas por cobrar */}
       {ordenesActivas.length > 0 && (
-        <div style={{ background: C.bg3, borderBottom: `1px solid ${C.border}`, padding: "8px 12px", overflowX: "auto" }}>
-          <div style={{ fontSize: 10, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: 1 }}>Cuentas por cobrar</div>
-          <div style={{ display: "flex", gap: 6, minWidth: "max-content" }}>
-            {ordenesActivas.map(o => {
-              const pendiente = o.items.filter(it => !it.paid).reduce((s, it) => s + it.price * it.qty, 0);
-              return (
-                <button key={o.id} onClick={() => setCobrarOrder(o)} style={{
-                  padding: "5px 12px", borderRadius: 16, fontSize: 12, cursor: "pointer",
-                  background: C.neon2 + "22", border: `1px solid ${C.neon2}`, color: C.neon2,                }}>
-                  {isBarra(o.mesa) ? o.mesa : `Mesa ${o.mesa}`}
-                </button>
-              );
-            })}
-          </div>
+        <div style={{
+          display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8,
+          padding: "8px 12px", background: C.bg3, borderBottom: `1px solid ${C.border}`,
+        }}>
+          <span style={{ fontSize: 11, color: C.muted, marginRight: 2 }}>Cuentas por cobrar:</span>
+          {ordenesActivas.map(o => {
+            const solicitado = o.payment_requested;
+            return (
+              <button key={o.id} onClick={() => setCobrarOrder(o)} style={{
+                padding: "5px 12px", borderRadius: 16, fontSize: 12, cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 5,
+                background: solicitado ? C.amber + "22" : C.neon2 + "22",
+                border: `1px solid ${solicitado ? C.amber : C.neon2}`,
+                color: solicitado ? C.amber : C.neon2,
+              }}>
+                {solicitado && <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.amber }} />}
+                {isBarra(o.mesa) ? o.mesa : `Mesa ${o.mesa}`}
+              </button>
+            );
+          })}
         </div>
       )}
 

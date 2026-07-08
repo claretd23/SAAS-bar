@@ -9,7 +9,9 @@ router.use(authMiddleware);
 const ITEM_STATUS_FLOW = ["pendiente", "preparando", "listo"];
 
 function parseOrder(o) {
-  return { ...o, items: JSON.parse(o.items), is_closed: !!o.is_closed };
+  // ============ NUEVO — también convierte payment_requested a booleano ============
+  return { ...o, items: JSON.parse(o.items), is_closed: !!o.is_closed, payment_requested: !!o.payment_requested };
+  // ============ FIN NUEVO ============
 }
 
 // GET — cuentas abiertas (sin importar cuándo se abrieron) + cerradas de HOY (para historial)
@@ -96,6 +98,24 @@ router.patch("/:id/items/:itemIndex/status", requireRole("barman", "admin", "sup
   res.json({ ok: true });
 });
 
+// ============ NUEVO — ruta completa ============
+// PATCH /:id/request-payment — el mesero avisa que la mesa quiere pagar.
+// Solo marca la bandera y notifica por socket; el barman sigue siendo quien
+// cobra desde su propia vista ("Cuentas por cobrar" ya la muestra resaltada).
+router.patch("/:id/request-payment", requireRole("mesero", "barman", "admin", "superadmin"), (req, res) => {
+  const order = db.prepare("SELECT * FROM orders WHERE id = ? AND business_id = ?")
+    .get(req.params.id, req.user.businessId);
+  if (!order) return res.status(404).json({ error: "Orden no encontrada" });
+  if (order.is_closed) return res.status(409).json({ error: "Esta cuenta ya está cerrada" });
+
+  db.prepare("UPDATE orders SET payment_requested = 1 WHERE id = ?").run(order.id);
+
+  req.app.get("io").to(req.user.businessId).emit("orders_updated");
+  req.app.get("io").to(req.user.businessId).emit("payment_requested", { orderId: order.id, mesa: order.mesa });
+  res.json({ ok: true });
+});
+// ============ FIN NUEVO ============
+
 // POST /:id/payments — registra un pago (parcial o total) contra la cuenta
 // de la mesa. `itemIndexes` son los índices de los items que cubre este
 // pago (para que alguien pueda pagar solo lo que consumió). Si después del
@@ -175,8 +195,10 @@ router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
     `).run(paymentId, req.user.businessId, order.id, amount, pay, req.user.userId || null, req.user.name || null);
 
     const allPaid = items.every(it => it.paid);
-    db.prepare("UPDATE orders SET items = ?, is_closed = ? WHERE id = ?")
+    // ============ NUEVO — se agregó ", payment_requested = 0" ============
+    db.prepare("UPDATE orders SET items = ?, is_closed = ?, payment_requested = 0 WHERE id = ?")
       .run(JSON.stringify(items), allPaid ? 1 : 0, order.id);
+    // ============ FIN NUEVO ============
 
     return { amount, allPaid };
   });

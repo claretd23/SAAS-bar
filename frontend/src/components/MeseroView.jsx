@@ -33,6 +33,7 @@ export default function MeseroView({ user, products, orders, business, tableCoun
   const [layoutModal, setLayoutModal] = useState(false);
   const [notifications, setNotifications] = useState([]);
   const prevOrdersRef = useRef(orders);
+  const [requestingPay, setRequestingPay] = useState(false);
 
   useEffect(() => {
     const prev = prevOrdersRef.current;
@@ -112,6 +113,20 @@ export default function MeseroView({ user, products, orders, business, tableCoun
       setSending(false);
     }
   };
+
+
+  const requestPayment = async () => {
+  if (!lugarOrder || requestingPay || lugarOrder.payment_requested) return;
+  setRequestingPay(true);
+  try {
+    await api.requestPayment(lugarOrder.id);
+    onOrdersChanged();
+  } catch (e) {
+    alert("Error al solicitar el cobro: " + e.message);
+  } finally {
+    setRequestingPay(false);
+  }
+};
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg }}>
@@ -373,9 +388,16 @@ export default function MeseroView({ user, products, orders, business, tableCoun
                 )}
 
                 {lugarOrder && (
-                  <Btn variant="amber" onClick={() => alert("Solicitud de cobro enviada al barman")} style={{ width: "100%", fontSize: 13 }}>
-                    Solicitar cobro al barman
-                  </Btn>
+                  <Btn
+                  variant="amber"
+                  onClick={requestPayment}
+                  disabled={requestingPay || lugarOrder.payment_requested}
+                  style={{ width: "100%", fontSize: 13 }}
+                >
+                  {lugarOrder.payment_requested
+                    ? "Cobro solicitado — esperando al barman"
+                    : requestingPay ? "Enviando..." : "Solicitar cobro al barman"}
+                </Btn>
                 )}
               </div>
             </div>
@@ -455,9 +477,16 @@ export default function MeseroView({ user, products, orders, business, tableCoun
                   </div>
                 </div>
 
-                <Btn variant="amber" onClick={() => alert("Solicitud de cobro enviada al barman")} style={{ width: "100%", fontSize: 14 }}>
-                  Solicitar cobro al barman
-                </Btn>
+                <Btn
+                variant="amber"
+                onClick={requestPayment}
+                disabled={requestingPay || lugarOrder.payment_requested}
+                style={{ width: "100%", fontSize: 13 }}
+              >
+                {lugarOrder.payment_requested
+                  ? "Cobro solicitado — esperando al barman"
+                  : requestingPay ? "Enviando..." : "Solicitar cobro al barman"}
+              </Btn>
               </>
             )}
           </div>

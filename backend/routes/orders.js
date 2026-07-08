@@ -12,12 +12,12 @@ function parseOrder(o) {
   return { ...o, items: JSON.parse(o.items), is_closed: !!o.is_closed };
 }
 
-// GET — órdenes del día del negocio (incluye cerradas, para historial)
+// GET — cuentas abiertas (sin importar cuándo se abrieron) + cerradas de HOY (para historial)
 router.get("/", (req, res) => {
   const orders = db.prepare(`
     SELECT * FROM orders
     WHERE business_id = ?
-      AND date(created_at) = date('now', 'localtime')
+      AND (is_closed = 0 OR date(created_at) = date('now', 'localtime'))
     ORDER BY created_at DESC
   `).all(req.user.businessId);
 
@@ -101,7 +101,7 @@ router.patch("/:id/items/:itemIndex/status", requireRole("barman", "admin", "sup
 // pago (para que alguien pueda pagar solo lo que consumió). Si después del
 // pago ya no queda nada sin pagar, la orden se cierra automáticamente
 // (is_closed = 1) y AHÍ se descuenta el stock — no antes.
-router.post("/:id/payments", requireRole("mesero", "barman", "admin", "superadmin"), (req, res) => {
+router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
   const { pay, itemIndexes } = req.body;
   if (!pay) return res.status(400).json({ error: "Falta método de pago" });
   if (!itemIndexes?.length) return res.status(400).json({ error: "Selecciona qué se está pagando" });

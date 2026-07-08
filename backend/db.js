@@ -185,6 +185,15 @@ if (orderCols.includes("status") && !orderCols.includes("is_closed")) {
   const migratedCount = migrateOrders();
   console.log(`Migracion: ${migratedCount} ordenes migradas al nuevo modelo`);
 }
+const bizCols = db.prepare("PRAGMA table_info(businesses)").all().map(c => c.name);
+if (!bizCols.includes("table_count")) {
+  db.exec("ALTER TABLE businesses ADD COLUMN table_count INTEGER NOT NULL DEFAULT 10");
+  console.log("Migracion: columna table_count agregada a businesses");
+}
+if (!bizCols.includes("bar_count")) {
+  db.exec("ALTER TABLE businesses ADD COLUMN bar_count INTEGER NOT NULL DEFAULT 6");
+  console.log("Migracion: columna bar_count agregada a businesses");
+}
 
 export default db;
 

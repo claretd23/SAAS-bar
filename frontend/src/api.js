@@ -1,13 +1,30 @@
 const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
 
 function getToken() {
-  return localStorage.getItem("token");
+  return sessionStorage.getItem("token");
+}
+
+// Callback que App.jsx registra al montar, para forzar el logout del
+// lado de React cuando el backend responde 401 (token inválido o sesión
+// cerrada por el admin). Sin esto, el frontend nunca se entera y la
+// pantalla se queda como si la sesión siguiera activa.
+let onUnauthorized = null;
+export function setOnUnauthorized(fn) {
+  onUnauthorized = fn;
+}
+
+function handleUnauthorized(status) {
+  if (status === 401) {
+    clearSession();
+    if (onUnauthorized) onUnauthorized();
+  }
 }
 
 async function request(path, { method = "GET", body } = {}) {
   const token = getToken();
   const res = await fetch(`${API_URL}/api${path}`, {
     method,
+    cache: "no-store",
     headers: {
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -16,6 +33,7 @@ async function request(path, { method = "GET", body } = {}) {
   });
 
   if (!res.ok) {
+    handleUnauthorized(res.status);
     const err = await res.json().catch(() => ({ error: "Error de conexión" }));
     throw new Error(err.error || "Error desconocido");
   }
@@ -32,14 +50,15 @@ async function requestForm(path, { method = "POST", data } = {}) {
 
   const res = await fetch(`${API_URL}/api${path}`, {
     method,
+    cache: "no-store",
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      // ⚠️ NO pongas Content-Type aquí — el browser lo agrega con el boundary correcto
     },
     body: form,
   });
 
   if (!res.ok) {
+    handleUnauthorized(res.status);
     const err = await res.json().catch(() => ({ error: "Error de conexión" }));
     throw new Error(err.error || "Error desconocido");
   }
@@ -60,7 +79,9 @@ export const api = {
   getBusinessUsers: (id) => request(`/businesses/${id}/users`),
   createBusinessUser: (id, data) => request(`/businesses/${id}/users`, { method: "POST", body: data }),
   deleteBusinessUser: (id, userId) => request(`/businesses/${id}/users/${userId}`, { method: "DELETE" }),
-
+  forceLogoutUser: (id, userId) => request(`/businesses/${id}/users/${userId}/logout`, { method: "POST" }),
+  getBusiness: (id) => request(`/businesses/${id}`),
+  updateLayout: (id, data) => request(`/businesses/${id}/layout`, { method: "PATCH", body: data }),
   // Productos — usan FormData porque llevan imagen opcional
   getProducts: () => request("/products"),
   createProduct: (data) => requestForm("/products", { method: "POST", data }),
@@ -89,15 +110,15 @@ export const api = {
 };
 
 export function saveSession(token, user) {
-  localStorage.setItem("token", token);
-  localStorage.setItem("user", JSON.stringify(user));
+  sessionStorage.setItem("token", token);
+  sessionStorage.setItem("user", JSON.stringify(user));
 }
 export function getSession() {
   const token = getToken();
-  const user = localStorage.getItem("user");
+  const user = sessionStorage.getItem("user");
   return token && user ? { token, user: JSON.parse(user) } : null;
 }
 export function clearSession() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("user");
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
 }

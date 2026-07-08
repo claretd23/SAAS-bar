@@ -3,6 +3,22 @@ import { C, fmt, today } from "../styles.js";
 import { api } from "../api.js";
 import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.jsx";
 
+function ImagePlaceholder({ size = 36 }) {
+  return (
+    <div style={{
+      width: size, height: size, borderRadius: 8, flexShrink: 0,
+      background: C.bg4, border: `1px solid ${C.border}`,
+      display: "flex", alignItems: "center", justifyContent: "center",
+    }}>
+      <svg width={size * 0.5} height={size * 0.5} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="2" y="4" width="20" height="16" rx="2" stroke={C.muted} strokeWidth="1.5" />
+        <circle cx="8" cy="10" r="1.75" stroke={C.muted} strokeWidth="1.5" />
+        <path d="M2 16.5L8 12L12.5 15.5L16 12.5L22 17" stroke={C.muted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </div>
+  );
+}
+
 const TABS = [
   { id: "dashboard", label: " Dashboard" },
   { id: "orders", label: " Mesas" },
@@ -252,6 +268,7 @@ function AdminPayModal({ order, onClose, onPaid }) {
 function MenuTab({ products, onChanged }) {
   const API_URL = import.meta.env.VITE_API_URL || "http://localhost:4000";
   const [modal, setModal] = useState(null);
+  const [search, setSearch] = useState("");
   const [form, setForm] = useState({
     name: "", cat: "", price: "", stock: "",
     imageFile: null, previewUrl: null, remove_image: false,
@@ -322,6 +339,9 @@ function MenuTab({ products, onChanged }) {
   };
 
   const cats = [...new Set(products.map(p => p.cat))];
+  const productosFiltrados = search.trim()
+    ? products.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    : null;
 
   return (
     <div className="fade-in">
@@ -330,12 +350,25 @@ function MenuTab({ products, onChanged }) {
         <Btn variant="primary" size="sm" onClick={() => open()}>+ Nuevo</Btn>
       </div>
 
-      {cats.map(cat => (
-        <div key={cat} style={{ marginBottom: 14 }}>
-          <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
-          {products.filter(p => p.cat === cat).map(p => (
+      <div style={{ display: "flex", alignItems: "center", background: C.bg4, border: `1px solid ${search ? C.neon : C.border}`, borderRadius: 8, padding: "0 8px", marginBottom: 14 }}>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar producto..."
+          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.text, padding: "7px 4px", fontSize: 12 }}
+        />
+        {search && (
+          <button onClick={() => setSearch("")} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 4 }}>✕</button>
+        )}
+      </div>
+
+      {productosFiltrados ? (
+        <div style={{ marginBottom: 14 }}>
+          {productosFiltrados.length === 0 && (
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: "20px 0" }}>Sin resultados</div>
+          )}
+          {productosFiltrados.map(p => (
             <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
-              {/* Imagen o emoji */}
               {p.image_url ? (
                 <img
                   src={`${API_URL}${p.image_url}`}
@@ -343,7 +376,7 @@ function MenuTab({ products, onChanged }) {
                   style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
                 />
               ) : (
-                <span style={{ fontSize: 24, width: 36, textAlign: "center" }}></span>
+                <ImagePlaceholder />
               )}
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
               <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
@@ -353,13 +386,36 @@ function MenuTab({ products, onChanged }) {
             </div>
           ))}
         </div>
-      ))}
+      ) : (
+      cats.map(cat => (
+        <div key={cat} style={{ marginBottom: 14 }}>
+          <div style={{ fontSize: 11, color: C.muted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 6 }}>{cat}</div>
+          {products.filter(p => p.cat === cat).map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
+              {p.image_url ? (
+                <img
+                  src={`${API_URL}${p.image_url}`}
+                  alt={p.name}
+                  style={{ width: 36, height: 36, borderRadius: 8, objectFit: "cover", flexShrink: 0 }}
+                />
+              ) : (
+                <ImagePlaceholder />
+              )}
+              <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
+              <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
+              <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
+              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}>🗑️</Btn>
+            </div>
+          ))}
+        </div>
+      ))
+      )}
 
       {modal && (
         <Modal title={modal === "new" ? "Nuevo producto" : "Editar producto"} onClose={() => setModal(null)}>
           <ErrorBanner message={error} />
 
-          {/* Preview de imagen */}
           <div style={{ marginBottom: 14 }}>
             {form.previewUrl ? (
               <div style={{ position: "relative", display: "inline-block" }}>
@@ -495,6 +551,7 @@ function PromosTab({ promos, onChanged }) {
 function InventoryTab({ products, onChanged }) {
   const [editing, setEditing] = useState(null);
   const [val, setVal] = useState("");
+  const [search, setSearch] = useState("");
 
   const adjust = async (id, delta) => {
     try { await api.adjustStock(id, delta); onChanged(); } catch (e) { alert(e.message); }
@@ -506,9 +563,29 @@ function InventoryTab({ products, onChanged }) {
     try { await api.setStock(id, n); onChanged(); setEditing(null); } catch (e) { alert(e.message); }
   };
 
+  const productosFiltrados = search.trim()
+    ? products.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()))
+    : products;
+
   return (
     <div className="fade-in">
-      {products.map(p => (
+      <div style={{ display: "flex", alignItems: "center", background: C.bg4, border: `1px solid ${search ? C.neon : C.border}`, borderRadius: 8, padding: "0 8px", marginBottom: 14 }}>
+        <input
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Buscar producto..."
+          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.text, padding: "7px 4px", fontSize: 12 }}
+        />
+        {search && (
+          <button onClick={() => setSearch("")} style={{ background: "transparent", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 4 }}>✕</button>
+        )}
+      </div>
+
+      {productosFiltrados.length === 0 && (
+        <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: "20px 0" }}>Sin resultados</div>
+      )}
+
+      {productosFiltrados.map(p => (
         <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderBottom: `1px solid ${C.border}` }}>
           <span style={{ fontSize: 18 }}>{p.emoji}</span>
           <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
@@ -577,6 +654,15 @@ function UsersTab({ businessId }) {
     } catch (e) { alert(e.message); }
   };
 
+  const forceLogout = async (u) => {
+    try {
+      await api.forceLogoutUser(businessId, u.id);
+      alert(`Se cerró la sesión de ${u.name}`);
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+
   if (loading) return <div style={{ textAlign: "center", color: C.muted, marginTop: 40 }}>Cargando...</div>;
 
   return (
@@ -596,6 +682,7 @@ function UsersTab({ businessId }) {
               <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
             </div>
             <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
+            <Btn size="sm" variant="ghost" onClick={() => forceLogout(u)}>🔒</Btn>
             <Btn size="sm" variant="ghost" onClick={() => remove(u)}>🗑</Btn>
           </div>
         </Card>

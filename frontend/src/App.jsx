@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 import { C, globalStyles } from "./styles.js";
-import { api, getSession, clearSession } from "./api.js";
+import { api, getSession, clearSession, setOnUnauthorized } from "./api.js";
 import { connectSocket, disconnectSocket } from "./socket.js";
 import Login from "./components/Login.jsx";
 import MeseroView from "./components/MeseroView.jsx";
@@ -10,7 +10,6 @@ import AdminView from "./components/AdminView.jsx";
 import SuperAdminView from "./superadmin/SuperAdminView.jsx";
 import SuperAdminLogin from "./superadmin/SuperAdminLogin.jsx";
 
-// Inyecta estilos globales una sola vez
 const style = document.createElement("style");
 style.textContent = globalStyles;
 document.head.appendChild(style);
@@ -20,14 +19,22 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [promos, setPromos] = useState([]);
   const [orders, setOrders] = useState([]);
+  const [business, setBusiness] = useState(null);
   const [ready, setReady] = useState(false);
 
   const loadData = useCallback(async () => {
     try {
-      const [p, pr, o] = await Promise.all([api.getProducts(), api.getPromos(), api.getOrders()]);
+      const session = getSession();
+      const [p, pr, o, b] = await Promise.all([
+        api.getProducts(),
+        api.getPromos(),
+        api.getOrders(),
+        session?.user?.businessId ? api.getBusiness(session.user.businessId) : Promise.resolve(null),
+      ]);
       setProducts(p);
       setPromos(pr);
       setOrders(o);
+      if (b) setBusiness(b);
     } catch (e) {
       console.error("Error cargando datos:", e);
     } finally {
@@ -35,41 +42,47 @@ export default function App() {
     }
   }, []);
 
-  useEffect(() => {
-    if (!user || user.role === "superadmin") { setReady(true); return; }
-    loadData();
-
-    const socket = connectSocket(user.businessId);
-
-    // Se dispara en la primera conexión Y en cada reconexión (ej. el iPad
-    // se quedó en reposo, se cortó el WiFi un momento, etc.). Volvemos a
-    // pedir el estado completo para no quedar desincronizados con eventos
-    // que se hayan perdido mientras el socket estuvo caído.
-    socket.on("connect", () => {
-      loadData();
-    });
-
-    // El backend emite "orders_updated" cuando cambia algo
-    socket.on("orders_updated", () => {
-      api.getOrders().then(setOrders).catch(() => {});
-    });
-    socket.on("products_updated", () => {
-      api.getProducts().then(setProducts).catch(() => {});
-    });
-
-    return () => disconnectSocket();
-  }, [user, loadData]);
-
   const handleLogin = (u) => setUser(u);
 
-  const handleLogout = () => {
+  const handleLogout = useCallback(() => {
     clearSession();
     disconnectSocket();
     setUser(null);
     setProducts([]);
     setPromos([]);
     setOrders([]);
-  };
+    setBusiness(null);
+  }, []);
+
+  // Se registra UNA sola vez: si cualquier petición al backend responde 401
+  // (token inválido, o el admin cerró la sesión de este usuario vía
+  // session_version), api.js llama a este callback y forzamos el logout
+  // del lado de React — sin esto, la pantalla se queda como si la sesión
+  // siguiera activa hasta que el usuario intente algo manualmente.
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      handleLogout();
+      alert("Tu sesión fue cerrada. Inicia sesión de nuevo.");
+    });
+  }, [handleLogout]);
+
+  useEffect(() => {
+    if (!user || user.role === "superadmin") { setReady(true); return; }
+    loadData();
+
+    const socket = connectSocket(user.businessId);
+    socket.on("connect", () => { loadData(); });
+    socket.on("orders_updated", () => { api.getOrders().then(setOrders).catch(() => {}); });
+    socket.on("products_updated", () => { api.getProducts().then(setProducts).catch(() => {}); });
+    socket.on("business_updated", () => {
+      const session = getSession();
+      if (session?.user?.businessId) {
+        api.getBusiness(session.user.businessId).then(setBusiness).catch(() => {});
+      }
+    });
+
+    return () => disconnectSocket();
+  }, [user, loadData]);
 
   const isSuperAdmin = user?.role === "superadmin";
 
@@ -81,11 +94,6 @@ export default function App() {
 
   return (
     <Routes>
-      {/* Ruta dedicada para el superadmin: /superadmin
-          - Sin sesión de superadmin -> pantalla de login propia
-          - Con sesión de superadmin -> panel de superadmin
-          Si alguien con sesión de negocio (mesero/barman/admin) visita esta
-          URL, lo regresamos a "/" para no mezclar los dos mundos. */}
       <Route
         path="/superadmin"
         element={
@@ -96,17 +104,17 @@ export default function App() {
                 : <Navigate to="/" replace />)
         }
       />
-
-      {/* Todo lo demás: flujo normal de negocio (mesero/barman/admin) */}
       <Route path="/*" element={<BusinessApp
         user={user}
         isSuperAdmin={isSuperAdmin}
         products={products}
         promos={promos}
         orders={orders}
+        business={business}
         setProducts={setProducts}
         setPromos={setPromos}
         setOrders={setOrders}
+        setBusiness={setBusiness}
         handleLogin={handleLogin}
         handleLogout={handleLogout}
       />} />
@@ -114,29 +122,31 @@ export default function App() {
   );
 }
 
-// Flujo de negocio normal (lo que antes vivía directo en App). Separado para
-// no mezclar su lógica de socket/carga de datos con la ruta de superadmin.
-function BusinessApp({ user, isSuperAdmin, products, promos, orders, setProducts, setPromos, setOrders, handleLogin, handleLogout }) {
+function BusinessApp({ user, isSuperAdmin, products, promos, orders, business, setProducts, setPromos, setOrders, setBusiness, handleLogin, handleLogout }) {
   if (!user) return <Login onLogin={handleLogin} />;
-
-  // Alguien con sesión de superadmin cayó en una ruta de negocio (ej. refrescó
-  // estando en "/" después de loguearse como superadmin en otra pestaña).
   if (isSuperAdmin) return <Navigate to="/superadmin" replace />;
+
+  const tableCount = business?.table_count || 10;
+  const barCount   = business?.bar_count   || 6;
 
   const commonProps = {
     user,
     products,
     promos,
     orders,
-    onOrdersChanged: () => api.getOrders().then(setOrders),
+    business,
+    tableCount,
+    barCount,
+    onOrdersChanged:   () => api.getOrders().then(setOrders),
     onProductsChanged: () => api.getProducts().then(setProducts),
-    onPromosChanged: () => api.getPromos().then(setPromos),
+    onPromosChanged:   () => api.getPromos().then(setPromos),
+    onBusinessChanged: () => business && api.getBusiness(business.id).then(setBusiness),
     onLogout: handleLogout,
   };
 
   if (user.role === "mesero") return <MeseroView {...commonProps} />;
   if (user.role === "barman") return <BarmanView {...commonProps} />;
-  if (user.role === "admin") return <AdminView {...commonProps} />;
+  if (user.role === "admin")  return <AdminView  {...commonProps} />;
 
   return (
     <div style={{ color: C.text, padding: 40 }}>

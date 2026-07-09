@@ -2,6 +2,11 @@ import { useState, useEffect } from "react";
 import { C, fmt, today } from "../styles.js";
 import { api } from "../api.js";
 import { Btn, Badge, Card, Modal, Input, ErrorBanner, Divider } from "./Common.jsx";
+import {
+  IconEdit, IconTrash, IconCard, IconCash, IconMobile, IconNote,
+  IconCamera, IconPause, IconPlay, IconLock, IconInfinity, IconHash,
+  IconDashboard,
+} from "./Icons.jsx";
 
 function ImagePlaceholder({ size = 36 }) {
   return (
@@ -43,7 +48,7 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
       {/* Header */}
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 20 }}>📊</span>
+          <IconDashboard size={20} color={C.neon} />
           <div>
             <div style={{ fontWeight: 600, color: C.neon, fontSize: 13 }}>ADMIN</div>
           </div>
@@ -111,7 +116,10 @@ function DashboardTab({ data, orders }) {
           <div style={{ fontSize: 12, color: C.muted, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>Por método de pago</div>
           {data.byPayMethod.map(m => (
             <div key={m.pay} style={{ display: "flex", justifyContent: "space-between", padding: "5px 0", fontSize: 13, borderBottom: `1px solid ${C.border}` }}>
-              <span>{m.pay === "ef" ? "💵 Efectivo" : m.pay === "ta" ? "💳 Tarjeta" : "📱 QR/Trans."}</span>
+              <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                {m.pay === "ef" ? <IconCash size={13} color={C.text} /> : m.pay === "ta" ? <IconCard size={13} color={C.text} /> : <IconMobile size={13} color={C.text} />}
+                {m.pay === "ef" ? "Efectivo" : m.pay === "ta" ? "Tarjeta" : "QR/Trans."}
+              </span>
               <span style={{ color: C.neon }}>{fmt(m.total)}</span>
             </div>
           ))}
@@ -157,12 +165,18 @@ function OrdersTab({ orders, onChanged }) {
                 </div>
               ))}
             </div>
-            {order.note && <div style={{ fontSize: 11, color: C.amber, marginBottom: 6 }}>📝 {order.note}</div>}
+            {order.note && (
+              <div style={{ fontSize: 11, color: C.amber, marginBottom: 6, display: "flex", alignItems: "center", gap: 5 }}>
+                <IconNote size={12} color={C.amber} /> {order.note}
+              </div>
+            )}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <span style={{ fontWeight: 600, color: C.neon }}>{fmt(order.total)}</span>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 {paidCount > 0 && <Badge color={C.neon}>{paidCount} pagado{paidCount > 1 ? "s" : ""}</Badge>}
-                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>💳 Cobrar</Btn>
+                <Btn size="sm" variant="amber" onClick={() => setPayModal(order)}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 5 }}><IconCard size={13} /> Cobrar</span>
+                </Btn>
               </div>
             </div>
           </Card>
@@ -270,7 +284,7 @@ function MenuTab({ products, onChanged }) {
   const [modal, setModal] = useState(null);
   const [search, setSearch] = useState("");
   const [form, setForm] = useState({
-    name: "", cat: "", price: "", stock: "",
+    name: "", cat: "", price: "", stock: "", unlimited_stock: false,
     imageFile: null, previewUrl: null, remove_image: false,
   });
   const [error, setError] = useState("");
@@ -278,11 +292,11 @@ function MenuTab({ products, onChanged }) {
 
   const open = (p = null) => {
     setForm(p ? {
-      name: p.name, cat: p.cat, price: p.price, stock: p.stock,
+      name: p.name, cat: p.cat, price: p.price, stock: p.stock, unlimited_stock: !!p.unlimited_stock,
       imageFile: null, previewUrl: p.image_url ? `${API_URL}${p.image_url}` : null,
       remove_image: false,
     } : {
-      name: "", cat: "", price: "", stock: "",
+      name: "", cat: "", price: "", stock: "", unlimited_stock: false,
       imageFile: null, previewUrl: null, remove_image: false,
     });
     setModal(p || "new");
@@ -315,7 +329,8 @@ function MenuTab({ products, onChanged }) {
         name: form.name,
         cat: form.cat,
         price: form.price,
-        stock: form.stock || 0,
+        stock: form.unlimited_stock ? 0 : (form.stock || 0),
+        unlimited_stock: form.unlimited_stock ? "true" : "false",
         ...(form.imageFile ? { image: form.imageFile } : {}),
         ...(form.remove_image ? { remove_image: "true" } : {}),
       };
@@ -380,9 +395,11 @@ function MenuTab({ products, onChanged }) {
               )}
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
               <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
-              <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}>🗑️</Btn>
+              <Badge color={p.unlimited_stock ? C.neon2 : p.stock < 5 ? C.red : C.muted}>
+                {p.unlimited_stock ? "∞ ilimitado" : `${p.stock} uds`}
+              </Badge>
+              <Btn size="sm" variant="ghost" onClick={() => open(p)}><IconEdit size={14} /></Btn>
+              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}><IconTrash size={14} /></Btn>
             </div>
           ))}
         </div>
@@ -403,9 +420,11 @@ function MenuTab({ products, onChanged }) {
               )}
               <span style={{ flex: 1, fontSize: 13 }}>{p.name}</span>
               <span style={{ color: C.neon, fontSize: 13 }}>${Number(p.price).toFixed(2)}</span>
-              <Badge color={p.stock < 5 ? C.red : C.muted}>{p.stock} uds</Badge>
-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}>🗑️</Btn>
+              <Badge color={p.unlimited_stock ? C.neon2 : p.stock < 5 ? C.red : C.muted}>
+                {p.unlimited_stock ? "∞ ilimitado" : `${p.stock} uds`}
+              </Badge>
+              <Btn size="sm" variant="ghost" onClick={() => open(p)}><IconEdit size={14} /></Btn>
+              <Btn size="sm" variant="ghost" onClick={() => del(p.id)}><IconTrash size={14} /></Btn>
             </div>
           ))}
         </div>
@@ -439,7 +458,7 @@ function MenuTab({ products, onChanged }) {
                 height: 100, border: `2px dashed ${C.border2}`, borderRadius: 10,
                 color: C.muted, cursor: "pointer", fontSize: 12, gap: 6,
               }}>
-                <span style={{ fontSize: 24 }}>📷</span>
+                <IconCamera size={24} color={C.muted} />
                 <span>Toca para subir imagen</span>
                 <span style={{ fontSize: 10 }}>JPG, PNG o WebP · máx 3 MB</span>
                 <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: "none" }} />
@@ -450,8 +469,21 @@ function MenuTab({ products, onChanged }) {
           <Input label="Nombre" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
           <Input label="Categoría" value={form.cat} onChange={e => setForm(f => ({ ...f, cat: e.target.value }))} placeholder="ej. Cócteles" />
           <Input label="Precio" type="number" value={form.price} onChange={e => setForm(f => ({ ...f, price: e.target.value }))} />
-          <Input label="Stock inicial" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
+          <label style={{
+            display: "flex", alignItems: "center", gap: 8, cursor: "pointer",
+            margin: "10px 0 4px", fontSize: 13,
+          }}>
+            <input
+              type="checkbox"
+              checked={form.unlimited_stock}
+              onChange={e => setForm(f => ({ ...f, unlimited_stock: e.target.checked }))}
+            />
+            Existencias ilimitadas
+          </label>
 
+          {!form.unlimited_stock && (
+            <Input label="Stock inicial" type="number" value={form.stock} onChange={e => setForm(f => ({ ...f, stock: e.target.value }))} />
+          )}
           <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
             <Btn variant="ghost" onClick={() => setModal(null)} style={{ flex: 1 }}>Cancelar</Btn>
             <Btn variant="primary" onClick={save} disabled={saving} style={{ flex: 1 }}>
@@ -508,9 +540,9 @@ function PromosTab({ promos, onChanged }) {
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <Badge color={p.active ? C.neon : C.muted}>{p.active ? "Activa" : "Inactiva"}</Badge>
               <Btn size="sm" variant="ghost" onClick={async () => { await api.togglePromo(p.id); onChanged(); }}>
-                {p.active ? "⏸" : "▶️"}
+                {p.active ? <IconPause size={13} /> : <IconPlay size={13} />}
               </Btn>
-              <Btn size="sm" variant="ghost" onClick={() => open(p)}>✏️</Btn>
+              <Btn size="sm" variant="ghost" onClick={() => open(p)}><IconEdit size={14} /></Btn>
             </div>
           </div>
         </Card>
@@ -547,6 +579,8 @@ function PromosTab({ promos, onChanged }) {
   );
 }
 
+
+
 /* ─── Inventario ─── */
 function InventoryTab({ products, onChanged }) {
   const [editing, setEditing] = useState(null);
@@ -562,6 +596,18 @@ function InventoryTab({ products, onChanged }) {
     if (isNaN(n) || n < 0) return;
     try { await api.setStock(id, n); onChanged(); setEditing(null); } catch (e) { alert(e.message); }
   };
+
+  // NUEVO: permite cambiar un producto existente entre ilimitado y limitado
+  // desde el inventario, sin tener que editarlo desde el menú.
+  const toggleUnlimited = async (p) => {
+    try {
+      await api.updateProduct(p.id, { unlimited_stock: (!p.unlimited_stock) ? "true" : "false" });
+      onChanged();
+    } catch (e) {
+      alert(e.message);
+    }
+  };
+  // FIN NUEVO
 
   const productosFiltrados = search.trim()
     ? products.filter(p => p.name.toLowerCase().includes(search.trim().toLowerCase()))
@@ -598,10 +644,24 @@ function InventoryTab({ products, onChanged }) {
             </div>
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <Badge color={p.stock === 0 ? C.red : p.stock < 5 ? C.amber : C.muted}>{p.stock}</Badge>
-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, -1)}>−</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => adjust(p.id, +1)}>+</Btn>
-              <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}>✏️</Btn>
+              {p.unlimited_stock ? (
+                <Badge color={C.neon2}>∞ ilimitado</Badge>
+              ) : (
+                <>
+                  <Badge color={p.stock === 0 ? C.red : p.stock < 5 ? C.amber : C.muted}>{p.stock}</Badge>
+                  <Btn size="sm" variant="ghost" onClick={() => { setEditing(p.id); setVal(p.stock); }}><IconEdit size={14} /></Btn>
+                </>
+              )}
+              {/* NUEVO: botón para alternar ilimitado/limitado */}
+              <Btn
+                size="sm"
+                variant="ghost"
+                onClick={() => toggleUnlimited(p)}
+                title={p.unlimited_stock ? "Volver a stock limitado" : "Marcar como ilimitado"}
+              >
+                {p.unlimited_stock ? <IconHash size={14} /> : <IconInfinity size={14} />}
+              </Btn>
+              {/* FIN NUEVO */}
             </div>
           )}
         </div>
@@ -609,6 +669,7 @@ function InventoryTab({ products, onChanged }) {
     </div>
   );
 }
+
 /* ─── Usuarios (meseros, barman, otros admins del negocio) ─── */
 const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };
 const ROLE_COLOR = { mesero: C.blue, barman: C.neon2, admin: C.amber };
@@ -682,8 +743,8 @@ function UsersTab({ businessId }) {
               <div style={{ fontSize: 11, color: C.muted }}>PIN: {u.pin}</div>
             </div>
             <Badge color={ROLE_COLOR[u.role] || C.muted}>{ROLE_LABEL[u.role] || u.role}</Badge>
-            <Btn size="sm" variant="ghost" onClick={() => forceLogout(u)}>🔒</Btn>
-            <Btn size="sm" variant="ghost" onClick={() => remove(u)}>🗑</Btn>
+            <Btn size="sm" variant="ghost" onClick={() => forceLogout(u)}><IconLock size={14} /></Btn>
+            <Btn size="sm" variant="ghost" onClick={() => remove(u)}><IconTrash size={14} /></Btn>
           </div>
         </Card>
       ))}

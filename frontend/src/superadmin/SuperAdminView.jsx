@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { C, fmt } from "../styles.js";
 import { api } from "../api.js";
 import { Btn, Badge, Card, Modal, Input, ErrorBanner } from "../components/Common.jsx";
+import { IconBuilding, IconPause, IconPlay, IconUser, IconTrash, IconCheckCircle } from "../components/Icons.jsx";
 
 export default function SuperAdminView({ onLogout }) {
   const [businesses, setBusinesses] = useState([]);
@@ -68,7 +69,7 @@ export default function SuperAdminView({ onLogout }) {
     <div style={{ display: "flex", flexDirection: "column", minHeight: "100vh", background: C.bg }}>
       <div style={{ background: C.bg2, borderBottom: `1px solid ${C.border}`, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 22 }}>🏢</span>
+          <IconBuilding size={22} color={C.neon2} />
           <div style={{ fontWeight: 700, color: C.neon2, fontSize: 15, letterSpacing: 1 }}>SUPER ADMIN</div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
@@ -125,16 +126,19 @@ export default function SuperAdminView({ onLogout }) {
 
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
               <Btn size="sm" variant={b.status === "active" ? "danger" : "primary"} onClick={() => toggleStatus(b)}>
-                {b.status === "active" ? "⏸ Suspender" : "▶️ Activar"}
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  {b.status === "active" ? <IconPause size={13} /> : <IconPlay size={13} />}
+                  {b.status === "active" ? "Suspender" : "Activar"}
+                </span>
               </Btn>
               <Btn size="sm" variant="ghost" onClick={async () => { setSelected(b); await loadUsers(b.id); setModal({ type: "users" }); setError(""); }}>
-                👤 Usuarios / PINs
+                <span style={{ display: "flex", alignItems: "center", gap: 5 }}><IconUser size={13} /> Usuarios / PINs</span>
               </Btn>
               <select value={b.plan} onChange={e => changePlan(b, e.target.value)}
                 style={{ background: C.bg4, border: `1px solid ${C.border2}`, color: C.text, borderRadius: 6, padding: "4px 8px", fontSize: 12, fontFamily: "inherit" }}>
                 {["trial", "mensual", "anual"].map(p => <option key={p} value={p}>{p}</option>)}
               </select>
-              <Btn size="sm" variant="danger" onClick={() => deleteBusiness(b.id)}>🗑️</Btn>
+              <Btn size="sm" variant="danger" onClick={() => deleteBusiness(b.id)}><IconTrash size={14} /></Btn>
             </div>
           </Card>
         ))}
@@ -162,7 +166,7 @@ export default function SuperAdminView({ onLogout }) {
 
       {/* Modal: negocio creado (muestra ID y PINs) */}
       {modal?.type === "created" && (
-        <Modal title="✅ Negocio creado" onClose={() => setModal(null)}>
+        <Modal title={<span style={{ display: "flex", alignItems: "center", gap: 6 }}><IconCheckCircle size={16} color={C.neon} /> Negocio creado</span>} onClose={() => setModal(null)}>
           <div style={{ background: C.bg3, borderRadius: 8, padding: 12, marginBottom: 12 }}>
             <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>ID para login (dáselo al cliente)</div>
             <div style={{ fontFamily: "monospace", fontSize: 18, color: C.neon, fontWeight: 700, letterSpacing: 2 }}>{modal.result.id}</div>

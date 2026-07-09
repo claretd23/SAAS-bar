@@ -253,13 +253,14 @@ export default function BarmanView({ user, products, orders, business, tableCoun
       </div>
 
       {ordenModal && (
-        <NuevaOrdenModal
-          products={products}
-          barras={BARRAS}
-          onClose={() => setOrdenModal(false)}
-          onSent={() => { setOrdenModal(false); onOrdersChanged(); }}
-        />
-      )}
+              <NuevaOrdenModal
+                products={products}
+                barras={BARRAS}
+                orders={orders}
+                onClose={() => setOrdenModal(false)}
+                onSent={() => { setOrdenModal(false); onOrdersChanged(); }}
+              />
+            )}
 
       {cobrarOrder && (
         <CobrarModal
@@ -280,7 +281,7 @@ export default function BarmanView({ user, products, orders, business, tableCoun
   );
 }
 
-function NuevaOrdenModal({ products, barras, onClose, onSent }) {
+function NuevaOrdenModal({ products, barras, orders, onClose, onSent }) {
   const [lugar, setLugar]     = useState(barras[0]);
   const [cart, setCart]       = useState({});
   const [search, setSearch]   = useState("");
@@ -333,15 +334,31 @@ function NuevaOrdenModal({ products, barras, onClose, onSent }) {
       <div style={{ marginBottom: 12 }}>
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Lugar en barra</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-          {barras.map(b => (
-            <button key={b} onClick={() => setLugar(b)} style={{
-              padding: "4px 10px", borderRadius: 8, fontSize: 12,
-              background: lugar === b ? C.neon2 + "22" : "transparent",
-              border: `1px solid ${lugar === b ? C.neon2 : C.border}`,
-              color: lugar === b ? C.neon2 : C.muted, cursor: "pointer",
-            }}>{b}</button>
-          ))}
+          {barras.map(b => {
+            const bOrder   = orders.find(o => String(o.mesa) === b && !o.is_closed);
+            const hasOrder = !!bOrder;
+            const hasListo = bOrder?.items.some(it => it.status === "listo" && !it.paid);
+            return (
+              <button key={b} onClick={() => setLugar(b)} style={{
+                padding: "4px 10px", borderRadius: 8, fontSize: 12,
+                background: lugar === b ? C.neon2 + "22" : "transparent",
+                border: `1px solid ${lugar === b ? C.neon2 : hasListo ? C.neon2 : hasOrder ? C.amber : C.border}`,
+                color: lugar === b ? C.neon2 : hasListo ? C.neon2 : hasOrder ? C.amber : C.muted,
+                cursor: "pointer",
+              }}>
+                {b}{hasListo ? " ✓" : hasOrder ? " •" : ""}
+              </button>
+            );
+          })}
         </div>
+        {(() => {
+          const bOrder = orders.find(o => String(o.mesa) === lugar && !o.is_closed);
+          return bOrder ? (
+            <div style={{ fontSize: 11, color: C.amber, marginTop: 6 }}>
+              CUENTA ABIERTA
+            </div>
+          ) : null;
+        })()}
       </div>
 
       {/* Buscador */}

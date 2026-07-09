@@ -335,9 +335,10 @@ function NuevaOrdenModal({ products, barras, orders, onClose, onSent }) {
         <div style={{ fontSize: 11, color: C.muted, marginBottom: 6 }}>Lugar en barra</div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
           {barras.map(b => {
-            const bOrder   = orders.find(o => String(o.mesa) === b && !o.is_closed);
-            const hasOrder = !!bOrder;
-            const hasListo = bOrder?.items.some(it => it.status === "listo" && !it.paid);
+            const bOrder      = orders.find(o => String(o.mesa) === b && !o.is_closed);
+            const hasOrder    = !!bOrder;
+            const unpaidItems = bOrder?.items.filter(it => !it.paid) || [];
+            const hasListo    = unpaidItems.length > 0 && unpaidItems.every(it => it.status === "listo");
             return (
               <button key={b} onClick={() => setLugar(b)} style={{
                 padding: "4px 10px", borderRadius: 8, fontSize: 12,

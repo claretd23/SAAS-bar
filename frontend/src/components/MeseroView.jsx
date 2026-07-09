@@ -162,10 +162,11 @@ export default function MeseroView({ user, products, orders, business, tableCoun
       <div style={{ background: C.bg3, borderBottom: `1px solid ${C.border}`, padding: "8px 12px", overflowX: "auto" }}>
         <div style={{ display: "flex", gap: 6, minWidth: "max-content" }}>
           {MESAS.map(m => {
-            const key      = String(m);
-            const hasOrder = orders.some(o => String(o.mesa) === key && !o.is_closed);
-            const mOrder   = orders.find(o => String(o.mesa) === key && !o.is_closed);
-            const hasListo = mOrder?.items.some(it => it.status === "listo" && !it.paid);
+            const key         = String(m);
+            const mOrder      = orders.find(o => String(o.mesa) === key && !o.is_closed);
+            const hasOrder    = !!mOrder;
+            const unpaidItems = mOrder?.items.filter(it => !it.paid) || [];
+            const hasListo    = unpaidItems.length > 0 && unpaidItems.every(it => it.status === "listo");
             return (
               <button key={key} onClick={() => { setLugar(key); setTab("menu"); }} style={{
                 padding: "4px 12px", borderRadius: 16,
@@ -180,9 +181,10 @@ export default function MeseroView({ user, products, orders, business, tableCoun
           })}
           <div style={{ width: 1, background: C.border, margin: "0 4px" }} />
           {BARRAS.map(b => {
-            const hasOrder = orders.some(o => String(o.mesa) === b && !o.is_closed);
-            const bOrder   = orders.find(o => String(o.mesa) === b && !o.is_closed);
-            const hasListo = bOrder?.items.some(it => it.status === "listo" && !it.paid);
+            const bOrder      = orders.find(o => String(o.mesa) === b && !o.is_closed);
+            const hasOrder    = !!bOrder;
+            const unpaidItems = bOrder?.items.filter(it => !it.paid) || [];
+            const hasListo    = unpaidItems.length > 0 && unpaidItems.every(it => it.status === "listo");
             return (
               <button key={b} onClick={() => { setLugar(b); setTab("menu"); }} style={{
                 padding: "4px 12px", borderRadius: 16,

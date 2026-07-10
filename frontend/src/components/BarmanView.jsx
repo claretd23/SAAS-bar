@@ -114,25 +114,36 @@ export default function BarmanView({ user, products, orders, business, tableCoun
 
       {/* Notificaciones de cobro solicitado — persisten hasta que se cobre
     la cuenta o el barman las cierre a mano con la X. */}
-      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 10 }}>
         {payNotifications.map(n => {
           const order = orders.find(o => o.id === n.orderId);
           return (
             <div key={n.orderId} style={{
-              background: C.amber + "22", border: `1px solid ${C.amber}`,
-              borderRadius: 10, padding: "10px 12px 10px 14px", fontSize: 13, fontWeight: 500,
-              color: C.amber, boxShadow: "0 4px 16px #0006",
-              display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10,
-              width: 200, cursor: order ? "pointer" : "default",
+              background: "#1f2125",
+              border: `1px solid #33363b`,
+              borderLeft: `4px solid ${C.amber}`,
+              borderRadius: 8,
+              padding: "12px 14px",
+              boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+              display: "flex", alignItems: "flex-start", gap: 10,
+              minWidth: 240,
+              maxWidth: 300,
+              cursor: order ? "pointer" : "default",
             }}
               onClick={() => order && setCobrarOrder(order)}
             >
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.text}</span>
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: C.amber, marginTop: 5, flexShrink: 0,
+              }} />
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "#f2f2f3", lineHeight: 1.4 }}>
+                {n.text}
+              </span>
               <button
                 onClick={(e) => { e.stopPropagation(); setPayNotifications(ns => ns.filter(x => x.orderId !== n.orderId)); }}
                 style={{
-                  background: "none", border: "none", color: C.amber, cursor: "pointer",
-                  fontSize: 15, lineHeight: 1, padding: 0, flexShrink: 0,
+                  background: "none", border: "none", color: "#9a9ca1", cursor: "pointer",
+                  fontSize: 16, lineHeight: 1, padding: 0, flexShrink: 0,
                 }}
                 aria-label="Cerrar aviso"
               >

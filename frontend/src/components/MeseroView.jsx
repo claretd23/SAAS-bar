@@ -35,26 +35,41 @@ export default function MeseroView({ user, products, orders, business, tableCoun
   const prevOrdersRef = useRef(orders);
   const [requestingPay, setRequestingPay] = useState(false);
 
+  // ============ NUEVO — notificaciones por MESERO, no por mesa seleccionada ============
+  // Se recorren TODAS las órdenes abiertas creadas por este mesero (created_by_id),
+  // sin importar qué mesa/barra tenga abierta en pantalla en este momento (`lugar`).
+  // Así, si cambia de mesa, sigue recibiendo el aviso cuando cambie el estado de sus items.
   useEffect(() => {
     const prev = prevOrdersRef.current;
-    const prevOrder = prev.find(o => String(o.mesa) === lugar && !o.is_closed);
-    const currOrder = orders.find(o => String(o.mesa) === lugar && !o.is_closed);
-    if (prevOrder && currOrder) {
+
+    const misOrdenesActuales = orders.filter(o => o.created_by_id === user.id && !o.is_closed);
+
+    misOrdenesActuales.forEach(currOrder => {
+      const prevOrder = prev.find(o => o.id === currOrder.id);
+      if (!prevOrder) return; // orden nueva, todavía no hay estado previo que comparar
+
+      const esBarraNotif = BARRAS.includes(String(currOrder.mesa));
+      const labelLugarNotif = esBarraNotif ? `Barra ${currOrder.mesa}` : `Mesa ${currOrder.mesa}`;
+
       currOrder.items.forEach((item, idx) => {
         const prevItem = prevOrder.items[idx];
         if (prevItem && prevItem.status !== item.status) {
           const notif = {
-            id: Date.now() + idx,
-            text: `${item.name} — ${STATUS_LABEL[item.status]}`,
+            id: `${currOrder.id}-${idx}-${Date.now()}`,
+            text: `${labelLugarNotif} — ${item.name}: ${STATUS_LABEL[item.status]}`,
             color: STATUS_COLOR[item.status],
+            status: item.status,
           };
           setNotifications(n => [...n, notif]);
-          setTimeout(() => setNotifications(n => n.filter(x => x.id !== notif.id)), 4000);
         }
       });
-    }
+    });
+
     prevOrdersRef.current = orders;
-  }, [orders, lugar]);
+  }, [orders, user.id]);
+  // ============ FIN NUEVO ============
+  // NOTA: las notificaciones ya NO se auto-cierran; permanecen visibles
+  // hasta que el mesero las cierre manualmente con el botón "×".
 
   const esBarra       = BARRAS.includes(lugar);
   const labelLugar    = esBarra ? `Barra ${lugar}` : `Mesa ${lugar}`;
@@ -131,17 +146,55 @@ export default function MeseroView({ user, products, orders, business, tableCoun
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", background: C.bg }}>
 
+      {/* ============ NUEVO — animación de entrada para las notificaciones ============ */}
+      <style>{`
+        @keyframes slideIn {
+          from { opacity: 0; transform: translateX(30px); }
+          to   { opacity: 1; transform: translateX(0); }
+        }
+      `}</style>
+      {/* ============ FIN NUEVO ============ */}
+
       {/* Notificaciones flotantes */}
-      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 8 }}>
-        {notifications.map(n => (
-          <div key={n.id} style={{
-            background: n.color + "22", border: `1px solid ${n.color}`,
-            borderRadius: 10, padding: "10px 14px", fontSize: 13, fontWeight: 500,
-            color: n.color, boxShadow: "0 4px 16px #0006",
-          }}>
-            {n.text}
-          </div>
-        ))}
+      <div style={{ position: "fixed", top: 16, right: 16, zIndex: 1000, display: "flex", flexDirection: "column", gap: 10 }}>
+        {notifications.map(n => {
+          // ============ NUEVO — diseño tipo tarjeta sólida (sin transparencias):
+          // fondo gris oscuro opaco, texto blanco legible, y el color de estado
+          // solo como acento (barra lateral + punto), sin emojis. No se auto-cierra. ============
+          return (
+            <div key={n.id} style={{
+              background: "#1f2125",
+              border: `1px solid #33363b`,
+              borderLeft: `4px solid ${n.color}`,
+              borderRadius: 8,
+              padding: "12px 14px",
+              boxShadow: "0 6px 20px rgba(0,0,0,0.45)",
+              display: "flex", alignItems: "flex-start", gap: 10,
+              minWidth: 240,
+              maxWidth: 300,
+              animation: "slideIn .25s ease-out",
+            }}>
+              <span style={{
+                width: 8, height: 8, borderRadius: "50%",
+                background: n.color, marginTop: 5, flexShrink: 0,
+              }} />
+              <span style={{ flex: 1, fontSize: 13, fontWeight: 500, color: "#f2f2f3", lineHeight: 1.4 }}>
+                {n.text}
+              </span>
+              <button
+                onClick={() => setNotifications(ns => ns.filter(x => x.id !== n.id))}
+                style={{
+                  background: "none", border: "none", color: "#9a9ca1", cursor: "pointer",
+                  fontSize: 16, lineHeight: 1, padding: 0, flexShrink: 0,
+                }}
+                aria-label="Cerrar aviso"
+                >
+                  ×
+                </button>
+            </div>
+          );
+          // ============ FIN NUEVO ============
+        })}
       </div>
 
       {/* Header */}

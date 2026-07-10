@@ -9,9 +9,10 @@ router.use(authMiddleware);
 const ITEM_STATUS_FLOW = ["pendiente", "preparando", "listo"];
 
 function parseOrder(o) {
-  // ============ NUEVO — también convierte payment_requested a booleano ============
-  return { ...o, items: JSON.parse(o.items), is_closed: !!o.is_closed, payment_requested: !!o.payment_requested };
-  // ============ FIN NUEVO ============
+
+  
+return { ...o, items: JSON.parse(o.items), is_closed: !!o.is_closed, payment_requested: !!o.payment_requested };
+
 }
 
 // GET — cuentas abiertas (sin importar cuándo se abrieron) + cerradas de HOY (para historial)
@@ -26,10 +27,7 @@ router.get("/", (req, res) => {
   res.json(orders.map(parseOrder));
 });
 
-// POST — enviar productos a una mesa (mesero o barman atendiendo la barra).
-// Si la mesa ya tiene una cuenta activa (is_closed = 0), se AGREGAN los
-// items a esa misma orden en vez de crear una nueva — así toda la mesa
-// queda en una sola cuenta acumulada, aunque se manden varias rondas.
+
 router.post("/", requireRole("mesero", "barman", "admin", "superadmin"), (req, res) => {
   const { mesa, items, note } = req.body;
 
@@ -76,9 +74,7 @@ router.post("/", requireRole("mesero", "barman", "admin", "superadmin"), (req, r
   res.json(parseOrder(order));
 });
 
-// PATCH /:id/items/:itemIndex/status — el barman avanza el estado de UN
-// producto específico dentro de la cuenta (pendiente → preparando → listo).
-// No afecta el resto de los items de la misma mesa.
+
 router.patch("/:id/items/:itemIndex/status", requireRole("barman", "admin", "superadmin"), (req, res) => {
   const { status } = req.body;
   const itemIndex = parseInt(req.params.itemIndex, 10);
@@ -98,10 +94,7 @@ router.patch("/:id/items/:itemIndex/status", requireRole("barman", "admin", "sup
   res.json({ ok: true });
 });
 
-// ============ NUEVO — ruta completa ============
-// PATCH /:id/request-payment — el mesero avisa que la mesa quiere pagar.
-// Solo marca la bandera y notifica por socket; el barman sigue siendo quien
-// cobra desde su propia vista ("Cuentas por cobrar" ya la muestra resaltada).
+
 router.patch("/:id/request-payment", requireRole("mesero", "barman", "admin", "superadmin"), (req, res) => {
   const order = db.prepare("SELECT * FROM orders WHERE id = ? AND business_id = ?")
     .get(req.params.id, req.user.businessId);
@@ -114,13 +107,10 @@ router.patch("/:id/request-payment", requireRole("mesero", "barman", "admin", "s
   req.app.get("io").to(req.user.businessId).emit("payment_requested", { orderId: order.id, mesa: order.mesa });
   res.json({ ok: true });
 });
-// ============ FIN NUEVO ============
+
 
 // POST /:id/payments — registra un pago (parcial o total) contra la cuenta
-// de la mesa. `itemIndexes` son los índices de los items que cubre este
-// pago (para que alguien pueda pagar solo lo que consumió). Si después del
-// pago ya no queda nada sin pagar, la orden se cierra automáticamente
-// (is_closed = 1) y AHÍ se descuenta el stock — no antes.
+// de la mesa.
 router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
   const { pay, itemIndexes } = req.body;
   if (!pay) return res.status(400).json({ error: "Falta método de pago" });
@@ -144,15 +134,15 @@ router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
     let amount = 0;
     let insufficientStock = [];
 
-    // 1) Validar stock de los items que se van a pagar/cerrar AHORA,
-    //    antes de tocar nada (todo o nada, igual que antes).
+
+
     const getProduct = db.prepare(
       "SELECT id, name, stock, unlimited_stock FROM products WHERE id = ? AND business_id = ?"
     );
     for (const idx of itemIndexes) {
       const item = items[idx];
       if (!item) continue;
-      if (item.paid) continue; // ya estaba pagado, no se vuelve a cobrar ni a descontar
+      if (item.paid) continue;
       amount += item.price * item.qty;
 
       const product = getProduct.get(item.id, req.user.businessId);
@@ -176,7 +166,8 @@ router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
       throw err;
     }
 
-    // 2) Marcar como pagados y descontar stock de esos items.
+
+
     const deductStock = db.prepare(
       "UPDATE products SET stock = MAX(0, stock - ?) WHERE id = ? AND business_id = ? AND unlimited_stock = 0"
     );
@@ -188,19 +179,30 @@ router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
       deductStock.run(item.qty, item.id, req.user.businessId);
     }
 
-    const paymentId = nanoid(10);
-    db.prepare(`
-      INSERT INTO payments (id, business_id, order_id, amount, pay, charged_by_id, charged_by_name)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(paymentId, req.user.businessId, order.id, amount, pay, req.user.userId || null, req.user.name || null);
-
-    const allPaid = items.every(it => it.paid);
-    // ============ NUEVO — se agregó ", payment_requested = 0" ============
-    db.prepare("UPDATE orders SET items = ?, is_closed = ?, payment_requested = 0 WHERE id = ?")
-      .run(JSON.stringify(items), allPaid ? 1 : 0, order.id);
+    // ============ NUEVO — folio secuencial global por negocio ============
+    // Se incrementa el contador del negocio dentro de la misma transacción
+    // que el pago, así nunca hay dos pagos con el mismo folio aunque se
+    // cobren cosas al mismo tiempo en distintas terminales.
+    db.prepare("UPDATE businesses SET sale_counter = sale_counter + 1 WHERE id = ?").run(req.user.businessId);
+    const { sale_counter: folio } = db.prepare("SELECT sale_counter FROM businesses WHERE id = ?").get(req.user.businessId);
     // ============ FIN NUEVO ============
 
-    return { amount, allPaid };
+    const paymentId = nanoid(10);
+    db.prepare(`
+      INSERT INTO payments (id, business_id, order_id, amount, pay, charged_by_id, charged_by_name, folio)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(paymentId, req.user.businessId, order.id, amount, pay, req.user.userId || null, req.user.name || null, folio);
+
+
+    const allPaid = items.every(it => it.paid);
+    
+    db.prepare("UPDATE orders SET items = ?, is_closed = ?, payment_requested = 0 WHERE id = ?")
+      .run(JSON.stringify(items), allPaid ? 1 : 0, order.id);
+
+    // ============ NUEVO — regresamos el folio para poder mostrarlo/imprimirlo al momento de cobrar ============
+    return { amount, allPaid, folio };
+    // ============ FIN NUEVO ============
+  
   });
 
   let result;
@@ -215,7 +217,8 @@ router.post("/:id/payments", requireRole("barman", "admin"), (req, res) => {
 
   req.app.get("io").to(req.user.businessId).emit("products_updated");
   req.app.get("io").to(req.user.businessId).emit("orders_updated");
-  res.json({ ok: true, amount: result.amount, closed: result.allPaid });
+  // NUEVO: folio en la respuesta, listo para usarse cuando integres el ticket
+  res.json({ ok: true, amount: result.amount, closed: result.allPaid, folio: result.folio });
 });
 
 export default router;

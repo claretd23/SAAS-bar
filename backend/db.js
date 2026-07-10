@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS products (
   stock INTEGER NOT NULL,
   image_url TEXT DEFAULT NULL,
   FOREIGN KEY(business_id) REFERENCES businesses(id)
-);
+  );
 
 CREATE TABLE IF NOT EXISTS promos (
   id TEXT PRIMARY KEY,
@@ -207,6 +207,20 @@ if (!bizCols.includes("bar_count")) {
   console.log("Migracion: columna bar_count agregada a businesses");
 }
 
+if (!bizCols.includes("sale_counter")) {
+  // Contador de ventas por negocio, usado para generar el folio legible
+  // de cada pago (1, 2, 3...) — útil para el futuro ticket impreso.
+  db.exec("ALTER TABLE businesses ADD COLUMN sale_counter INTEGER NOT NULL DEFAULT 0");
+  console.log("Migracion: columna sale_counter agregada a businesses");
+}
+
+const paymentCols = db.prepare("PRAGMA table_info(payments)").all().map(c => c.name);
+if (!paymentCols.includes("folio")) {
+  // Numero de venta/ticket legible, secuencial por negocio (1, 2, 3...).
+  // Distinto del id (nanoid) que ya existe, que es interno y no se muestra.
+  db.exec("ALTER TABLE payments ADD COLUMN folio INTEGER");
+  console.log("Migracion: columna folio agregada a payments");
+}
 export default db;
 
 const plainPinUsers = db.prepare("SELECT id, pin FROM users").all()

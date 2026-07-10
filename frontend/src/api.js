@@ -107,8 +107,23 @@ export const api = {
     request(`/orders/${orderId}/payments`, { method: "POST", body: { pay, itemIndexes } }),
   requestPayment: (orderId) =>
     request(`/orders/${orderId}/request-payment`, { method: "PATCH" }),
+  
+  
   // Reportes
-  getDashboard: () => request("/reports/dashboard"),
+getDashboard: () => request("/reports/dashboard"),
+getSalesHistory: (filters = {}) => {
+  const params = new URLSearchParams();
+  if (filters.start_date) params.set("start_date", filters.start_date);
+  if (filters.end_date) params.set("end_date", filters.end_date);
+  if (filters.pay) params.set("pay", filters.pay);
+  if (filters.charged_by_id) params.set("charged_by_id", filters.charged_by_id);
+  // NUEVO
+  if (filters.folio) params.set("folio", filters.folio);
+  // FIN NUEVO
+  if (filters.limit) params.set("limit", filters.limit);
+  if (filters.offset) params.set("offset", filters.offset);
+  return request(`/reports/sales-history?${params.toString()}`);
+},
 };
 
 export function saveSession(token, user) {

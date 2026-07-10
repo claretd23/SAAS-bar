@@ -30,6 +30,7 @@ const TABS = [
   { id: "menu", label: " Menú" },
   { id: "promos", label: " Promociones" },
   { id: "inventory", label: " Inventario" },
+  { id: "history", label: " Historial" },
   { id: "users", label: " Usuarios" },
 ];
 
@@ -73,7 +74,7 @@ export default function AdminView({ user, products, promos, orders, onOrdersChan
         {tab === "menu" && <MenuTab products={products} onChanged={onProductsChanged} />}
         {tab === "promos" && <PromosTab promos={promos} onChanged={onPromosChanged} />}
         {tab === "inventory" && <InventoryTab products={products} onChanged={onProductsChanged} />}
-        {tab === "users" && <UsersTab businessId={user.businessId} />}
+        {tab === "history" && <SalesHistoryTab businessId={user.businessId} />}        {tab === "users" && <UsersTab businessId={user.businessId} />}
       </div>
     </div>
   );
@@ -669,6 +670,266 @@ function InventoryTab({ products, onChanged }) {
     </div>
   );
 }
+
+/* ─── Historial de ventas ─── */
+const PAY_LABEL = { ef: "Efectivo", ta: "Tarjeta", qr: "QR/Trans." };
+const PAGE_SIZE = 10;
+
+function toLocalISODate(d) {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function dateOffset(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return toLocalISODate(d);
+}
+function startOfWeek() {
+  const d = new Date();
+  const day = d.getDay();
+  const diff = day === 0 ? 6 : day - 1;
+  d.setDate(d.getDate() - diff);
+  return toLocalISODate(d);
+}
+function startOfMonth() {
+  const d = new Date();
+  d.setDate(1);
+  return toLocalISODate(d);
+}
+
+function SalesHistoryTab({ businessId }) {
+  const [staff, setStaff] = useState([]);
+  // ============ NUEVO — por defecto no hay fechas (start_date/end_date vacíos),
+  // así el backend no filtra por día y regresa las ventas más recientes de
+  // cualquier fecha. Solo se llenan cuando el usuario elige un rango. ============
+  const [filters, setFilters] = useState({
+    start_date: "", end_date: "", pay: "", charged_by_id: "", folio: "",
+  });
+  // ============ FIN NUEVO ============
+  const [sales, setSales] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [summary, setSummary] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+  // ============ NUEVO — "recent" es el estado inicial por defecto ============
+  const [preset, setPreset] = useState("recent");
+  // ============ FIN NUEVO ============
+  const [showCustomRange, setShowCustomRange] = useState(false);
+
+  useEffect(() => {
+    api.getBusinessUsers(businessId).then(setStaff).catch(() => {});
+  }, [businessId]);
+
+  const load = (reset = true) => {
+    setLoading(true);
+    const offset = reset ? 0 : sales.length;
+    api.getSalesHistory({ ...filters, limit: PAGE_SIZE, offset })
+      .then(res => {
+        setSales(reset ? res.sales : [...sales, ...res.sales]);
+        setTotal(res.total);
+        setSummary(res.summary);
+      })
+      .catch(() => {
+        setSales([]); setTotal(0);
+        setSummary({ total: 0, count: 0, avgTicket: 0, byPayMethod: [] });
+      })
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => load(true), []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const setQuickRange = (name, start, end) => {
+    setPreset(name);
+    setShowCustomRange(false);
+    setFilters(f => ({ ...f, start_date: start, end_date: end }));
+  };
+
+  // ============ NUEVO — vuelve al estado "sin filtro de fecha" ============
+  const setRecent = () => {
+    setPreset("recent");
+    setShowCustomRange(false);
+    setFilters(f => ({ ...f, start_date: "", end_date: "" }));
+  };
+  // ============ FIN NUEVO ============
+
+  const openCustomRange = () => {
+    setPreset("custom");
+    setShowCustomRange(true);
+  };
+
+  const toggleExpand = (saleId) => {
+    setExpanded(e => (e === saleId ? null : saleId));
+  };
+
+  return (
+    <div className="fade-in">
+      <div style={{ display: "flex", alignItems: "center", background: C.bg4, border: `1px solid ${filters.folio ? C.neon : C.border}`, borderRadius: 8, padding: "0 8px", marginBottom: 10 }}>
+        <input
+          value={filters.folio}
+          onChange={e => setFilters(f => ({ ...f, folio: e.target.value.replace(/\D/g, "") }))}
+          onKeyDown={e => { if (e.key === "Enter") load(true); }}
+          placeholder="Buscar por no. de cuenta (folio)..."
+          inputMode="numeric"
+          style={{ flex: 1, background: "transparent", border: "none", outline: "none", color: C.text, padding: "7px 4px", fontSize: 12 }}
+        />
+        {filters.folio && (
+          <button
+            onClick={() => { setFilters(f => ({ ...f, folio: "" })); load(true); }}
+            style={{ background: "transparent", border: "none", color: C.muted, fontSize: 16, cursor: "pointer", lineHeight: 1, padding: 4 }}
+          >✕</button>
+        )}
+        <Btn size="sm" variant="ghost" onClick={() => load(true)} disabled={loading} style={{ marginLeft: 4 }}>
+          Buscar
+        </Btn>
+      </div>
+
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        {/* ============ NUEVO — botón "Recientes", primero en la fila y activo por defecto ============ */}
+        <Btn size="sm" variant={preset === "recent" ? "primary" : "ghost"}
+          onClick={setRecent}>Recientes</Btn>
+        {/* ============ FIN NUEVO ============ */}
+        <Btn size="sm" variant={preset === "today" ? "primary" : "ghost"}
+          onClick={() => setQuickRange("today", toLocalISODate(new Date()), toLocalISODate(new Date()))}>Hoy</Btn>
+        <Btn size="sm" variant={preset === "yesterday" ? "primary" : "ghost"}
+          onClick={() => setQuickRange("yesterday", dateOffset(-1), dateOffset(-1))}>Ayer</Btn>
+        <Btn size="sm" variant={preset === "week" ? "primary" : "ghost"}
+          onClick={() => setQuickRange("week", startOfWeek(), toLocalISODate(new Date()))}>Esta semana</Btn>
+        <Btn size="sm" variant={preset === "month" ? "primary" : "ghost"}
+          onClick={() => setQuickRange("month", startOfMonth(), toLocalISODate(new Date()))}>Este mes</Btn>
+        <Btn size="sm" variant={preset === "custom" ? "primary" : "ghost"}
+          onClick={openCustomRange}>Personalizado</Btn>
+      </div>
+
+      {showCustomRange && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, color: C.muted, marginBottom: 3, textTransform: "uppercase" }}>Desde</div>
+            <input type="date" value={filters.start_date}
+              onChange={e => setFilters(f => ({ ...f, start_date: e.target.value }))}
+              style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 8px", fontSize: 12 }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: C.muted, marginBottom: 3, textTransform: "uppercase" }}>Hasta</div>
+            <input type="date" value={filters.end_date}
+              onChange={e => setFilters(f => ({ ...f, end_date: e.target.value }))}
+              style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 8px", fontSize: 12 }} />
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
+        <div>
+          <div style={{ fontSize: 10, color: C.muted, marginBottom: 3, textTransform: "uppercase" }}>Método</div>
+          <select value={filters.pay} onChange={e => setFilters(f => ({ ...f, pay: e.target.value }))}
+            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 8px", fontSize: 12 }}>
+            <option value="">Todos</option>
+            <option value="ef">Efectivo</option>
+            <option value="ta">Tarjeta</option>
+            <option value="qr">QR/Trans.</option>
+          </select>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: C.muted, marginBottom: 3, textTransform: "uppercase" }}>Mesero/Barman</div>
+          <select value={filters.charged_by_id} onChange={e => setFilters(f => ({ ...f, charged_by_id: e.target.value }))}
+            style={{ width: "100%", background: C.bg4, border: `1px solid ${C.border}`, borderRadius: 6, color: C.text, padding: "6px 8px", fontSize: 12 }}>
+            <option value="">Todos</option>
+            {staff.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <Btn variant="primary" size="sm" onClick={() => load(true)} disabled={loading} style={{ marginBottom: 14 }}>
+        {loading ? "Buscando..." : "Buscar"}
+      </Btn>
+
+      {summary && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10, marginBottom: 10 }}>
+            <Card>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Total vendido</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.neon }}>{fmt(summary.total)}</div>
+            </Card>
+            <Card>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Ventas</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.blue }}>{summary.count}</div>
+            </Card>
+            <Card>
+              <div style={{ fontSize: 11, color: C.muted, marginBottom: 4 }}>Ticket promedio</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: C.neon2 }}>{fmt(summary.avgTicket)}</div>
+            </Card>
+          </div>
+
+          {summary.byPayMethod?.length > 0 && (
+            <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+              {summary.byPayMethod.map(m => (
+                <div key={m.pay} style={{
+                  flex: "1 1 120px", background: C.bg4, border: `1px solid ${C.border}`,
+                  borderRadius: 8, padding: "8px 10px",
+                }}>
+                  <div style={{ fontSize: 10, color: C.muted, marginBottom: 2 }}>{PAY_LABEL[m.pay] || m.pay}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{fmt(m.total)}</div>
+                  <div style={{ fontSize: 10, color: C.muted }}>{m.count} venta{m.count !== 1 ? "s" : ""}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sales.length === 0 && !loading && (
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 12, padding: "20px 0" }}>Sin ventas en este rango</div>
+          )}
+
+          {sales.map(s => {
+            let items = [];
+            try { items = JSON.parse(s.order_items || "[]"); } catch { items = []; }
+            const isOpen = expanded === s.id;
+            return (
+              <div key={s.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <div
+                  onClick={() => toggleExpand(s.id)}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", fontSize: 12, cursor: "pointer" }}
+                >
+                  <span style={{ color: C.muted, minWidth: 40 }}>#{s.folio ?? "—"}</span>
+                  <span style={{ flex: 1 }}>
+                    {/^B\d+$/.test(String(s.mesa)) ? `Barra ${s.mesa}` : `Mesa ${s.mesa}`}
+                  </span>
+                  <span style={{ color: C.muted, fontSize: 11 }}>{s.charged_by_name || "—"}</span>
+                  <Badge color={C.muted}>{PAY_LABEL[s.pay] || s.pay}</Badge>
+                  <span style={{ color: C.muted, fontSize: 11, minWidth: 90, textAlign: "right" }}>
+                    {new Date(s.created_at.replace(" ", "T") + "Z").toLocaleString("es-MX", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                  <span style={{ color: C.neon, fontWeight: 600, minWidth: 70, textAlign: "right" }}>{fmt(s.amount)}</span>
+                  <span style={{ color: C.muted, fontSize: 10 }}>{isOpen ? "▲" : "▼"}</span>
+                </div>
+                {isOpen && (
+                  <div style={{ background: C.bg4, borderRadius: 8, padding: "8px 10px", marginBottom: 8 }}>
+                    <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>
+                    </div>
+                    {items.map((it, idx) => (
+                      <div key={idx} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, padding: "2px 0", opacity: it.paid ? 1 : 0.5 }}>
+                        <span>{it.qty}× {it.name}</span>
+                        <span>{fmt(it.price * it.qty)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {sales.length < total && (
+            <Btn variant="ghost" size="sm" onClick={() => load(false)} disabled={loading} style={{ marginTop: 12, width: "100%" }}>
+              {loading ? "Cargando..." : `Cargar más (${sales.length} de ${total})`}
+            </Btn>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 
 /* ─── Usuarios (meseros, barman, otros admins del negocio) ─── */
 const ROLE_LABEL = { mesero: "Mesero", barman: "Barman", admin: "Admin" };

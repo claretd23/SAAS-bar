@@ -372,9 +372,6 @@ export default function MeseroView({ user, products, orders, business, tableCoun
 
                 <Divider />
 
-<div style={{ fontSize: 12, color: C.muted, display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-                  <span>Subtotal ronda</span><span>{fmt(sub)}</span>
-                </div>
                 <div style={{ fontSize: 14, fontWeight: 600, display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
                   <span>Total ronda</span><span style={{ color: C.neon }}>{fmt(total)}</span>
                 </div>
